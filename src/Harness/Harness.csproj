@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>harness</AssemblyName>
+    <RootNamespace>Harness</RootNamespace>
+    <!-- No trimming and no Native AOT: plugins need AssemblyLoadContext and JIT. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Harness.Cli\Harness.Cli.csproj" />
+    <ProjectReference Include="..\Harness.Server\Harness.Server.csproj" />
+  </ItemGroup>
+</Project>

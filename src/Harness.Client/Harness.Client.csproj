@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Typed client for the harness daemon API, and the wire contracts shared with the server.</Description>
+  </PropertyGroup>
+</Project>

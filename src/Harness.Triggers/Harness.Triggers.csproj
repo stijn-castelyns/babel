@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Harness.Runs\Harness.Runs.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Cronos" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Harness.Tests" />
+  </ItemGroup>
+</Project>

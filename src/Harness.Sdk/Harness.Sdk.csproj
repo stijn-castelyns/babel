@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Plugin SDK for the harness: plugins reference only this package.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>Harness.Sdk</PackageId>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- HttpContext for webhook trigger sources. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <!-- Microsoft.Agents.AI (not only .Abstractions) is needed because AgentSkill lives there. The host always shares it with plugins. -->
+    <PackageReference Include="Microsoft.Agents.AI" />
+  </ItemGroup>
+</Project>

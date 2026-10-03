@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Harness.Runs\Harness.Runs.csproj" />
+    <ProjectReference Include="..\Harness.Triggers\Harness.Triggers.csproj" />
+    <ProjectReference Include="..\Harness.Client\Harness.Client.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Harness.Tests" />
+  </ItemGroup>
+</Project>
