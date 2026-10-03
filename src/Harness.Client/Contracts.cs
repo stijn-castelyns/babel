@@ -28,7 +28,7 @@ public sealed record ForkRequest(long? AtSeq = null, string? Title = null);
 public sealed record RunDto(
     string Id, string SessionId, string Agent, string Model, string? TriggerId, string State, DateTimeOffset CreatedAt,
     DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt, long InputTokens, long OutputTokens, string? LastTool,
-    string? Error, string? ResultText);
+    string? Error, string? ResultText, JsonNode? Output = null, IReadOnlyList<string>? Files = null);
 
 public sealed record ApprovalDecisionRequest(bool Approved, string? Reason = null, bool Always = false, string? DecidedBy = null);
 

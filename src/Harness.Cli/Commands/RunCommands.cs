@@ -67,8 +67,11 @@ internal static class RunCommands
         {
             using HarnessClient c = CliContext.Connect(p);
             RunDto r = await c.RunAsync(p.GetValue(id)!, ct);
-            Console.WriteLine(r.ResultText ?? r.Error ?? "");
-            return 0;
+            if (p.GetValue(CliContext.Json)) { Output.Json(new { r.State, r.ResultText, r.Output, r.Files, r.Error }); return 0; }
+            if (r.Output is { } structured) Console.WriteLine(structured.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            else Console.WriteLine(r.ResultText ?? r.Error ?? "");
+            foreach (string file in r.Files ?? []) Console.WriteLine($"file: {file}");
+            return r.State == "succeeded" ? 0 : 1;
         }));
         runs.Subcommands.Add(output);
 

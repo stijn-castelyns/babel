@@ -95,6 +95,7 @@ public class TemplateTests
                 1 => ScriptedChatClient.Call("read", new() { ["path"] = "notes.md" }),
                 2 => ScriptedChatClient.Call("read", new() { ["path"] = "setup.out" }),
                 3 => ScriptedChatClient.Call("read", new() { ["path"] = "plain.txt" }),
+                4 => ScriptedChatClient.Call("submit_output", new() { ["text"] = "all good" }),
                 _ => ScriptedChatClient.Text("all good"),
             };
         });
@@ -158,7 +159,9 @@ public class TemplateTests
                 if touch "$HARNESS_TEMPLATE/x" 2>/dev/null; then echo writable >> where.txt; else echo readonly >> where.txt; fi
                 """));
         File.WriteAllText(Path.Combine(home.Paths.TriggersDir, "boxed.yaml"), "template: boxed\n");
-        home.Build(new ScriptedChatClient((_, _) => ScriptedChatClient.Text("ok")));
+        home.Build(new ScriptedChatClient((messages, _) => messages.Any(m => m.Role == ChatRole.Tool)
+            ? ScriptedChatClient.Text("ok")
+            : ScriptedChatClient.Call("submit_output", new() { ["text"] = "ok" })));
         await home.Triggers.StartAsync(CancellationToken.None);
 
         RunRecord run = await home.Triggers.FireAsync("boxed", "go", null, CancellationToken.None);

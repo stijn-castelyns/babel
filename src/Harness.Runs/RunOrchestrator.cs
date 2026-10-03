@@ -157,7 +157,12 @@ public sealed class RunOrchestrator : IAsyncDisposable
         {
             if (_active.TryGetValue(runId, out ActiveRun? run)) return await run.Completion.Task.WaitAsync(ct);
             if (_sessions.Index.GetRun(runId) is { } done && RunStates.IsFinal(done.State))
-                return new RunResult { RunId = done.Id, SessionId = done.SessionId, State = done.State, Text = done.ResultText, Error = done.Error, InputTokens = done.InputTokens, OutputTokens = done.OutputTokens };
+                return new RunResult
+                {
+                    RunId = done.Id, SessionId = done.SessionId, State = done.State, TriggerId = done.TriggerId, Text = done.ResultText, Error = done.Error,
+                    Output = done.Output is { } output ? JsonNode.Parse(output) : null, Files = done.Files,
+                    InputTokens = done.InputTokens, OutputTokens = done.OutputTokens,
+                };
             if (!_parked.ContainsKey(runId)) throw new KeyNotFoundException($"Run '{runId}' not found.");
             await Task.Delay(100, ct);
         }
@@ -239,6 +244,8 @@ public sealed class RunOrchestrator : IAsyncDisposable
         record.FinishedAt = DateTimeOffset.UtcNow;
         record.Error = result.Error;
         record.ResultText = result.Text;
+        record.Output = result.Output?.ToJsonString();
+        record.Files = [.. result.Files];
         record.InputTokens = result.InputTokens;
         record.OutputTokens = result.OutputTokens;
         _sessions.Index.UpsertRun(record);
@@ -247,6 +254,8 @@ public sealed class RunOrchestrator : IAsyncDisposable
             ["state"] = result.State,
             ["error"] = result.Error,
             ["text"] = result.Text,
+            ["output"] = result.Output?.DeepClone(),
+            ["files"] = result.Files.Count > 0 ? new JsonArray([.. result.Files.Select(f => (JsonNode)f)]) : null,
             ["inputTokens"] = result.InputTokens,
             ["outputTokens"] = result.OutputTokens,
             ["elapsedMs"] = (long)(record.FinishedAt.Value - (record.StartedAt ?? record.CreatedAt)).TotalMilliseconds,
@@ -322,6 +331,9 @@ public sealed class RunOrchestrator : IAsyncDisposable
         session.Info.Status = "running";
         session.Save();
 
+        OutputContract? contract = template is null ? null : new OutputContract(template, workspace,
+            Path.Combine(_workspaces.RunDirectory(record.Id), "output"), data => Emit(session, record.Id, EventTypes.OutputValidated, data));
+
         SessionRuntimeState state = _runtime.Get(session.Id);
         state.NextTurn();
         RunEvents events = new(this, session, record);
@@ -338,7 +350,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
             Events = events,
             State = state,
             Interactive = request.Interactive,
-            RunInstructions = JoinInstructions(request.RunInstructions, template?.Instructions),
+            RunInstructions = JoinInstructions(request.RunInstructions, template?.Instructions, contract?.Instructions),
             TriggerId = request.TriggerId,
             SecretValues = _secrets.Values(),
             SpillThresholdChars = _catalog.Config.Tools.SpillThresholdChars,
@@ -368,19 +380,35 @@ public sealed class RunOrchestrator : IAsyncDisposable
                 ? await built.Agent.DeserializeSessionAsync(saved, cancellationToken: ct)
                 : await built.Agent.CreateSessionAsync(ct);
 
-            AgentRunOptions? options = request.ExtraTools.Count > 0
-                ? new ChatClientAgentRunOptions(new ChatOptions { Tools = [.. request.ExtraTools] })
+            List<AITool> extraTools = [.. request.ExtraTools];
+            if (contract is not null) extraTools.Add(contract.Tool);
+            AgentRunOptions? options = extraTools.Count > 0
+                ? new ChatClientAgentRunOptions(new ChatOptions { Tools = extraTools })
                 : null;
 
             IEnumerable<ChatMessage> next = starting.Messages;
             string lastText = "";
             bool rejected = false;
+            string? invalid = null;
+            contract?.BeginTurn();
             while (true)
             {
                 SetState(session, record, RunStates.Running);
                 (string text, List<ToolApprovalRequestContent> approvalRequests) = await StreamTurnAsync(built.Agent, next, agentSession, options, run, ct);
                 if (text.Length > 0) lastText = text;
-                if (approvalRequests.Count == 0) break;
+                if (approvalRequests.Count == 0)
+                {
+                    if (contract is null) break;
+                    // The turn ended: check the output contract, and give the agent another try while retries are left.
+                    SetState(session, record, RunStates.Validating);
+                    string? retry;
+                    try { retry = contract.EndTurn(); }
+                    catch (OutputRejectedException ex) { invalid = ex.Message; break; }
+                    if (retry is null) break;
+                    contract.BeginTurn();
+                    next = [new ChatMessage(ChatRole.User, retry)];
+                    continue;
+                }
 
                 // The whole batch is stored before anything is decided, so a restart mid-batch loses neither requests nor answers.
                 // The agent session is saved too: Agent Framework binds approval responses to requests kept in its state.
@@ -407,8 +435,15 @@ public sealed class RunOrchestrator : IAsyncDisposable
             }
 
             session.Info.AgentState = await built.Agent.SerializeSessionAsync(agentSession, cancellationToken: ct);
-            string finalState = rejected ? RunStates.Rejected : RunStates.Succeeded;
-            RunResult result = Final(active, finalState, lastText, rejected ? "An approval was denied." : null, run);
+            string finalState = rejected ? RunStates.Rejected : invalid is not null ? RunStates.InvalidOutput : RunStates.Succeeded;
+            RunResult result = Final(active, finalState, lastText, rejected ? "An approval was denied." : invalid, run);
+            if (contract is not null && finalState == RunStates.Succeeded)
+                result = result with
+                {
+                    Output = contract.Accepted?.DeepClone(),
+                    Text = contract.Kind is "text" or "reply" && contract.Accepted?["text"] is JsonValue reply ? reply.ToString() : lastText,
+                    Files = contract.CollectFiles(),
+                };
 
             RunCompletedContext completed = new()
             {

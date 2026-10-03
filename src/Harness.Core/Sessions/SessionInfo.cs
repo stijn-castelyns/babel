@@ -55,6 +55,10 @@ public sealed class RunRecord
     public string? LastTool { get; set; }
     public string? Error { get; set; }
     public string? ResultText { get; set; }
+    /// <summary>Output accepted by <c>submit_output</c>, as JSON.</summary>
+    public string? Output { get; set; }
+    /// <summary>Copies of the files the output contract declared, under <c>runs/&lt;run-id&gt;/output/files</c>.</summary>
+    public List<string> Files { get; set; } = [];
 }
 
 internal static class SessionJson

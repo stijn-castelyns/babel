@@ -58,6 +58,16 @@ public sealed class HarnessDb
                 event_id TEXT NOT NULL, trigger_id TEXT NOT NULL, received_at TEXT, payload TEXT, status TEXT, run_id TEXT,
                 PRIMARY KEY (trigger_id, event_id));
             """);
+        AddColumn(c, "runs", "output", "TEXT");
+        AddColumn(c, "runs", "files", "TEXT");
+    }
+
+    /// <summary>Adds a column that a later version introduced to a table an earlier version created.</summary>
+    private static void AddColumn(SqliteConnection c, string table, string column, string type)
+    {
+        using SqliteCommand info = c.CreateCommand();
+        info.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'";
+        if (Convert.ToInt64(info.ExecuteScalar(), CultureInfo.InvariantCulture) == 0) Exec(c, $"ALTER TABLE {table} ADD COLUMN {column} {type}");
     }
 
     // ---- sessions ----
@@ -177,10 +187,10 @@ public sealed class HarnessDb
         using SqliteConnection c = Open();
         using SqliteCommand cmd = c.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO runs (id, session_id, agent, model, trigger_id, state, created_at, started_at, finished_at, input_tokens, output_tokens, last_tool, error, result_text)
-            VALUES ($id, $s, $a, $m, $t, $state, $c, $st, $f, $in, $out, $tool, $err, $res)
+            INSERT INTO runs (id, session_id, agent, model, trigger_id, state, created_at, started_at, finished_at, input_tokens, output_tokens, last_tool, error, result_text, output, files)
+            VALUES ($id, $s, $a, $m, $t, $state, $c, $st, $f, $in, $out, $tool, $err, $res, $output, $files)
             ON CONFLICT(id) DO UPDATE SET state = $state, started_at = $st, finished_at = $f, input_tokens = $in, output_tokens = $out,
-                last_tool = $tool, error = $err, result_text = $res;
+                last_tool = $tool, error = $err, result_text = $res, output = $output, files = $files;
             """;
         cmd.Parameters.AddWithValue("$id", r.Id);
         cmd.Parameters.AddWithValue("$s", r.SessionId);
@@ -196,6 +206,8 @@ public sealed class HarnessDb
         cmd.Parameters.AddWithValue("$tool", (object?)r.LastTool ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$err", (object?)r.Error ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$res", (object?)r.ResultText ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$output", (object?)r.Output ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$files", r.Files.Count > 0 ? System.Text.Json.JsonSerializer.Serialize(r.Files) : DBNull.Value);
         cmd.ExecuteNonQuery();
     }
 
@@ -238,7 +250,8 @@ public sealed class HarnessDb
         using SqliteConnection c = Open();
         using SqliteCommand cmd = c.CreateCommand();
         cmd.CommandText = $"""
-            SELECT id, session_id, agent, model, trigger_id, state, created_at, started_at, finished_at, input_tokens, output_tokens, last_tool, error, result_text
+            SELECT id, session_id, agent, model, trigger_id, state, created_at, started_at, finished_at, input_tokens, output_tokens, last_tool, error, result_text,
+                   output, files
             FROM runs {where} ORDER BY created_at DESC LIMIT $limit
             """;
         bind(cmd);
@@ -251,6 +264,7 @@ public sealed class HarnessDb
                 Id = r.GetString(0), SessionId = r.GetString(1), Agent = r.GetString(2), Model = r.GetString(3), TriggerId = Str(r, 4),
                 State = r.GetString(5), CreatedAt = Date(r, 6)!.Value, StartedAt = Date(r, 7), FinishedAt = Date(r, 8),
                 InputTokens = r.GetInt64(9), OutputTokens = r.GetInt64(10), LastTool = Str(r, 11), Error = Str(r, 12), ResultText = Str(r, 13),
+                Output = Str(r, 14), Files = Str(r, 15) is { } files ? System.Text.Json.JsonSerializer.Deserialize<List<string>>(files) ?? [] : [],
             });
         return rows;
     }

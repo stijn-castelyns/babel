@@ -63,6 +63,17 @@ layer) and its `instructions:` join prompt layer 6. The template's sandbox and l
 workspace. `keep: always | onFailure | never` (default `onFailure`) is applied when the run reaches its final state,
 including runs cancelled or rejected while parked. Keyed sessions follow their latest run's workspace.
 
+**Output contracts (phase 4)**: every templated run gets one extra tool, `submit_output`, whose parameter schema is the
+template's output schema (`kind: json` with `schema:`; `text` and `reply` take `{ text }`, `files` takes `{ summary }`;
+non-object schemas are wrapped as `{ output }`). Submissions are validated with JsonSchema.Net and every declared file
+must exist; the tool answers with each problem by JSON pointer. A turn that ends without valid output moves the run to
+`validating`, and the harness tells the agent what is wrong in a user message; each invalid submission or empty turn uses
+one of `retries` (default 2), after which the run ends as `invalid_output`. The contract text joins prompt layer 6.
+Accepted output is written to `runs/<run-id>/output/output.json` as soon as it validates (so a run parked on an approval
+keeps it across a restart), declared files are copied to `runs/<run-id>/output/files/`, and both are stored on the run
+record (`harness runs output`, `GET /api/runs/{id}`, `RUN_FINISHED`). Each check emits `OUTPUT_VALIDATED`. The six final
+states are `succeeded`, `invalid_output`, `failed`, `timed_out`, `cancelled` and `rejected`.
+
 ## Deviations from the design
 
 | Design | Implementation | Why |
@@ -76,13 +87,13 @@ including runs cancelled or rejected while parked. Keyed sessions follow their l
 | `git` steps | Run on the host, not in the sandbox | Clones need network and credentials the sandbox (often `network: none`) does not have; no repository code runs during a clone. |
 | `network: allowlist` through an egress proxy | Treated as `none` | Fails closed until the proxy exists. |
 | Processes started from any thread | All child processes start from one dedicated thread (`ProcessSpawner`) | `bwrap --die-with-parent` uses `PR_SET_PDEATHSIG`, which fires when the forking *thread* exits; retiring thread-pool threads would kill sandboxed commands. |
-| Parked runs keep their whole `RunRequest` | Everything except per-run extra tools is kept | Extra tools (the future `submit_output`) are rebuilt from the run template when templates land. |
+| Parked runs keep their whole `RunRequest` | Everything except `ExtraTools` is kept | `submit_output` is rebuilt from the run template on resume; `ExtraTools` is only for programmatic callers. |
+| `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
 | `harness` with no arguments opens the TUI | Opens line-mode chat in the current directory | The Terminal.Gui TUI is not built yet. |
 
 ## Not built yet
 
-- **Phase 4:** output contracts with `submit_output` and retries,
-  output sinks (`reply`, `file`, `webhook`, `run`), `run-completed` source, coalescing, per-sender rate limits,
+- **Phase 4:** output sinks (`reply`, `file`, `webhook`, `run`), `run-completed` source, coalescing, per-sender rate limits,
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.

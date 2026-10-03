@@ -18,7 +18,8 @@ internal static class Mapping
         s.Status, s.TriggerId, s.CreatedAt, s.UpdatedAt, s.InputTokens, s.OutputTokens, s.MessageCount);
 
     public static RunDto ToDto(this RunRecord r) => new(r.Id, r.SessionId, r.Agent, r.Model, r.TriggerId, r.State, r.CreatedAt, r.StartedAt,
-        r.FinishedAt, r.InputTokens, r.OutputTokens, r.LastTool, r.Error, r.ResultText);
+        r.FinishedAt, r.InputTokens, r.OutputTokens, r.LastTool, r.Error, r.ResultText,
+        r.Output is { } output ? System.Text.Json.Nodes.JsonNode.Parse(output) : null, r.Files);
 
     public static ApprovalDto ToDto(this PendingApproval p) => new(p.RequestId, p.RunId, p.SessionId, p.ToolName, p.ToolCallId, p.Arguments, p.Summary, p.RequestedAt);
 
