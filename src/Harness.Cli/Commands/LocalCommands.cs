@@ -21,6 +21,7 @@ internal static class LocalCommands
         yield return Workspaces();
         yield return Agents();
         yield return Templates();
+        yield return Sandboxes();
         yield return Plugins();
         yield return Install();
         yield return Uninstall();
@@ -185,6 +186,35 @@ internal static class LocalCommands
         }));
         agents.Subcommands.Add(ls);
         return agents;
+    }
+
+    private static Command Sandboxes()
+    {
+        Command sandbox = new("sandbox", "Sandbox profiles from sandboxes.yaml.");
+        Command ls = new("ls", "List sandbox profiles.");
+        ls.SetAction(p => Local(() =>
+        {
+            ConfigCatalog catalog = new(CliContext.Paths(p));
+            Output.Table(p, ["PROFILE", "TYPE", "NETWORK", "ALLOW HOSTS", "MOUNTS"], catalog.Sandboxes.Select(kv => new[]
+            {
+                kv.Key, kv.Value.Type, kv.Value.Network, kv.Value.AllowHosts.Count > 0 ? string.Join(", ", kv.Value.AllowHosts) : "-", kv.Value.Mounts.Count.ToString(),
+            }));
+            return 0;
+        }));
+        sandbox.Subcommands.Add(ls);
+
+        Argument<string> profile = new("profile") { Description = "Sandbox profile name" };
+        Command test = new("test", "Start the profile in the daemon and check that its mounts, network and limits hold.") { profile };
+        test.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            IReadOnlyList<SandboxProbeDto> results = await c.TestSandboxAsync(p.GetValue(profile)!, ct);
+            if (p.GetValue(CliContext.Json)) Output.Json(results);
+            else Output.Table(p, ["CHECK", "RESULT", "DETAIL"], results.Select(r => new[] { r.Check, r.Status, r.Detail }));
+            return results.Any(r => r.Status == "fail") ? 1 : 0;
+        }));
+        sandbox.Subcommands.Add(test);
+        return sandbox;
     }
 
     private static Command Templates()

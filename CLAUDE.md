@@ -6,7 +6,7 @@ This is the `harness`: a self-hosted .NET 10 coding agent harness built on Micro
   original; three embedded diagrams did not survive the export and appear as `[embedded content: …]` placeholders).
 - **Where things stand:** `docs/STATUS.md` lists what is built, every deliberate deviation from the design and why, and
   what is not built yet. Keep it current: update it in the same commit as the work.
-- **Next up:** the egress proxy for `network: allowlist` and `harness sandbox test <profile>`; then the terminal UI.
+- **Next up:** the terminal UI (Terminal.Gui 2.5); then phase 5 (Identity, passkeys, pairing, the PWA).
 
 ## Build and test
 
@@ -39,6 +39,10 @@ calls is enough. Tests use `ScriptedChatClient` through `AgentFactory.ChatClient
 - Live-only events (`TEXT_MESSAGE_CONTENT`) are never replayed; tests must assert on persisted events.
 - The OpenAI adapter rewrites every tool's root schema and defaults `additionalProperties` to `false`; set it explicitly
   when a tool takes free-form objects (`submit_output` does).
+- `network: allowlist` sandboxes run every command under `harness __egress-forward`; the forwarder is located from
+  `Environment.ProcessPath` and `AppContext.BaseDirectory`, which works in tests because the test project references the
+  `Harness` exe (so `harness.dll` lands in the test bin).
+- `pkill -f "harness.dll serve"` also matches the shell running it; find daemon PIDs with `ps` and kill those.
 - Templated runs always get the output contract: scripted test models must call `submit_output` or the run ends
   `invalid_output`.
 

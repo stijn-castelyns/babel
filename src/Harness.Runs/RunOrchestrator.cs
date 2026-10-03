@@ -374,6 +374,14 @@ public sealed class RunOrchestrator : IAsyncDisposable
         // Skill directories are mounted read-only so skill scripts can run inside the sandbox.
         IReadOnlyList<string> skillDirs = _skills.SkillDirectories(agent);
         spec = spec with { Mounts = [.. spec.Mounts, .. skillDirs.Select((d, i) => new MountSpec(d, $"/harness/skills/{i}", MountMode.ReadOnly))] };
+        spec = spec with
+        {
+            OnEgress = attempt =>
+            {
+                if (!attempt.Allowed)
+                    Emit(session, record.Id, EventTypes.EgressDenied, new JsonObject { ["host"] = attempt.Host, ["port"] = attempt.Port, ["sandbox"] = spec.Name });
+            },
+        };
         if (spec.Limits.WallClockMinutes is int wallClock && wallClock < maxMinutes)
             limit.CancelAfter(TimeSpan.FromMinutes(Math.Max(1, wallClock)) - elapsed.Elapsed);
 

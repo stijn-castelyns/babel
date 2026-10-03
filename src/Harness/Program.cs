@@ -3,6 +3,10 @@ using Harness.Cli;
 using Harness.Server;
 using Microsoft.Extensions.Hosting;
 
+// Inside an allowlisted sandbox the same binary relays connections to the daemon's egress proxy; start it before anything else.
+if (args.Length > 0 && args[0] == Harness.Sandbox.Egress.EgressForwarder.Command)
+    return await Harness.Sandbox.Egress.EgressForwarder.RunAsync(args[1..]);
+
 // One binary carries every role: 'harness serve' is the daemon, every other command is a client of it.
 RootCommand root = HarnessCli.Create();
 

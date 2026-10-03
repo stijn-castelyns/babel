@@ -55,3 +55,5 @@ public sealed record ErrorDto(string Error);
 public sealed record PruneRequest(bool DryRun = false);
 
 public sealed record PruneReportDto(IReadOnlyList<string> Sessions, IReadOnlyList<string> RunFolders, int Events, bool DryRun);
+
+public sealed record SandboxProbeDto(string Check, string Status, string Detail);

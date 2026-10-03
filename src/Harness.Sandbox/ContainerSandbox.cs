@@ -23,7 +23,7 @@ public sealed class ContainerSandboxProvider : ISandboxProvider
             "-v", $"{spec.WorkspaceHostPath}:{spec.WorkspaceSandboxPath}:rw", "-w", spec.WorkspaceSandboxPath];
         foreach (MountSpec m in spec.Mounts)
             args.AddRange(["-v", $"{m.HostPath}:{m.SandboxPath}:{(m.Mode == MountMode.ReadWrite ? "rw" : "ro")}"]);
-        // Allowlisted egress needs the daemon's proxy, which is not built yet; until then allowlist means no network.
+        // The egress proxy is wired into bubblewrap only so far; for containers allowlist still means no network (fail closed).
         if (spec.Network != NetworkMode.Full) args.AddRange(["--network", "none"]);
         if (spec.Limits.Cpus is double cpus) args.AddRange(["--cpus", cpus.ToString(CultureInfo.InvariantCulture)]);
         if (spec.Limits.MemoryMb is int mem) args.AddRange(["--memory", $"{mem}m"]);

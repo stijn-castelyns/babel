@@ -44,6 +44,26 @@ is unparked before it resumes, so a crash mid-resume can never run an approved t
 `none`, `bubblewrap` (namespaces unshared, read-only system dirs, private `/tmp` and home) and `container`
 (Docker/Podman with CPU, memory and PID limits). Triggered runs refuse to start unsandboxed unless allowed.
 
+**Egress proxy (`network: allowlist`)**: a bubblewrap sandbox with `network: allowlist` keeps its network namespace unshared.
+The daemon starts an HTTP proxy per sandbox on a Unix socket in a private 0700 folder, bind-mounted at `/harness/egress`.
+Inside, the harness binary runs as `harness __egress-forward 3128 /harness/egress/proxy.sock -- <command>`: it listens on
+the sandbox's own `127.0.0.1:3128`, relays each connection to the socket, and runs the command as its child (stdio and exit
+code pass through); `HTTP(S)_PROXY`/`ALL_PROXY` (both cases) point at it and `NO_PROXY` keeps loopback direct. The proxy
+serves `CONNECT host:port` and absolute-form `http://` requests (forwarded with `Connection: close`), resolves names in the
+daemon, and only connects to `allowHosts`: `host` (ports 80 and 443), `*.domain` (subdomains only), `host:port`. Refusals
+answer 403 with the reason and become `EGRESS_DENIED` run events. When the daemon itself needs a proxy (`HTTPS_PROXY`,
+`HTTP_PROXY`, `ALL_PROXY`, with credentials, honouring `NO_PROXY` hosts, suffixes and CIDRs), connections are chained
+through it. Setup steps, skill scripts and stdio MCP servers go through the same path. The forwarder needs only the binary
+for a single-file publish; under `dotnet harness.dll` the app folder and the .NET install are mounted read-only too.
+
+`harness sandbox test <profile>` (`POST /api/sandboxes/{name}/test`, run by the daemon so it sees the daemon's environment)
+starts the profile on a scratch workspace and checks from the inside: commands run, the workspace is read-write and visible
+on the host, `/usr` is read-only, the harness home is invisible, each mount exists with its mode, the network matches the
+profile (no direct route to 1.1.1.1:53 for `none`/`allowlist`; up to three allowlisted hosts reachable by `CONNECT` through
+the proxy; an outside host refused with 403), and limits (cgroup `memory.max`, `pids.max`, `cpu.max` in containers; a
+warning where the provider does not enforce them). It prints pass / warn / fail and exits 1 on any failure.
+`harness sandbox ls` lists the profiles.
+
 **Extensions (phase 3)**: MCP (`mcp.json`, stdio servers spawned per run inside the sandbox, shared remote HTTP servers,
 `mcp__<server>__<tool>` names, allow/deny lists); skills via `AgentSkillsProvider` with a script runner that executes in
 the sandbox; C# plugins in collectible `AssemblyLoadContext`s with shared host assemblies, SDK-range and hash checks;
@@ -151,7 +171,9 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 | Triggers reference a run template | Triggers reference a template, or name `agent`, `workspace` and `prompt` directly | The direct form stays for simple runs against an existing folder (a chat assistant in a named workspace) that need no workspace build. |
 | `run:` steps run `setup.sh` from the workspace | A `./name` missing from the workspace runs from the template folder, mounted read-only | Setup scripts work without copying them into the agent's workspace. |
 | `git` steps | Run on the host, not in the sandbox | Clones need network and credentials the sandbox (often `network: none`) does not have; no repository code runs during a clone. |
-| `network: allowlist` through an egress proxy | Treated as `none` | Fails closed until the proxy exists. |
+| The sandbox reaches the egress proxy through a bound Unix socket | A forwarder inside the sandbox (the harness binary) bridges `127.0.0.1:3128` to that socket and runs the command as its child | Tools only take TCP proxies from `HTTP(S)_PROXY`, and an unshared network namespace has nothing but loopback; something inside has to listen on it. This costs one .NET start-up per sandboxed command in allowlisted profiles. |
+| Containers reach the proxy over an internal network | `network: allowlist` in a `container` profile still means no network | The forwarder would need the harness (and for `dotnet harness.dll`, the .NET runtime) to run inside arbitrary images, and no container runtime was available to verify it; it fails closed, and `sandbox test` says so. |
+| `bubblewrap` limits | `cpus`, `memoryMb` and `pids` are not enforced by bubblewrap (only the wall clock is) | bwrap has no cgroup support; `sandbox test` warns. Use a container profile for hard limits. |
 | Processes started from any thread | All child processes start from one dedicated thread (`ProcessSpawner`) | `bwrap --die-with-parent` uses `PR_SET_PDEATHSIG`, which fires when the forking *thread* exits; retiring thread-pool threads would kill sandboxed commands. |
 | Parked runs keep their whole `RunRequest` | Everything except `ExtraTools` and the concurrency `Gate` is kept | `submit_output` is rebuilt from the run template on resume; `ExtraTools` is only for programmatic callers. A run resumed after a restart does not count against its trigger's `concurrency:` limits; slots are in-memory. |
 | Delivery failures | A failed sink turns `succeeded` into `failed` | The design leaves it open; valid output that never reached its destination is not a success, and the output stays in `runs/<run-id>/output`. |
@@ -161,7 +183,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
+- The egress proxy for `container` sandboxes.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.
 - **Phase 5:** ASP.NET Core Identity with passkeys and step-up, device-pairing login, scoped tokens, the PWA, Web Push.
 - **Phase 6:** Signal, WhatsApp and Messenger sources with in-chat approvals.

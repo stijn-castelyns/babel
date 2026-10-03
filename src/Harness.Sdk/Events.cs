@@ -28,6 +28,8 @@ public static class EventTypes
     public const string OutputDelivered = "OUTPUT_DELIVERED";
     /// <summary>Older history was summarised into a checkpoint in <c>checkpoints.jsonl</c>.</summary>
     public const string Checkpoint = "CHECKPOINT";
+    /// <summary>The egress proxy of a <c>network: allowlist</c> sandbox refused a connection.</summary>
+    public const string EgressDenied = "EGRESS_DENIED";
 
     /// <summary>Live-only events are streamed but never written to <c>events.jsonl</c>.</summary>
     public static bool IsPersisted(string type) => type != TextMessageContent;

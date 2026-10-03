@@ -53,7 +53,12 @@ public sealed record SandboxSpec
     public SandboxLimits Limits { get; init; } = new();
     public string? Image { get; init; }
     public IReadOnlyDictionary<string, string> Options { get; init; } = new Dictionary<string, string>();
+    /// <summary>Called for every connection a <c>network: allowlist</c> sandbox attempts, allowed or refused.</summary>
+    public Action<EgressAttempt>? OnEgress { get; init; }
 }
+
+/// <summary>One outbound connection from an allowlisted sandbox, as its egress proxy decided it.</summary>
+public sealed record EgressAttempt(string Host, int Port, bool Allowed);
 
 /// <summary>Translates between host paths and the paths a sandboxed process sees.</summary>
 public sealed class PathMap

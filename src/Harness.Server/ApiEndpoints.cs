@@ -92,6 +92,9 @@ internal static class ApiEndpoints
 
         api.MapPost("/sessions/reindex", (SessionStore sessions) => Results.Ok(sessions.Reindex()));
 
+        api.MapPost("/sandboxes/{name}/test", async (string name, Harness.Sandbox.SandboxProbe probe, Harness.Core.HarnessPaths paths, CancellationToken ct) =>
+            (await probe.RunAsync(name, paths.Home, ct)).Select(r => new SandboxProbeDto(r.Check, r.Status, r.Detail)));
+
         api.MapPost("/retention/sweep", async (PruneRequest body, Retention retention, CancellationToken ct) =>
         {
             RetentionReport r = await retention.SweepAsync(body.DryRun, ct);

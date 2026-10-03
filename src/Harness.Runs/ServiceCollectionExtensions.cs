@@ -52,6 +52,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ConfigCatalog>(),
             [.. sp.GetRequiredService<PluginRegistry>().SandboxProviders(), .. SandboxFactory.BuiltIn()]));
 
+        services.AddSingleton<SandboxProbe>();
         services.AddSingleton<EventHub>();
         services.AddSingleton<ApprovalBroker>();
         services.AddSingleton<ApprovalStore>();

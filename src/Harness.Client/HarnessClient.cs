@@ -94,6 +94,9 @@ public sealed class HarnessClient : IDisposable
 
     public Task<int> ReindexAsync(CancellationToken ct = default) => PostAsync<int>("api/sessions/reindex", new { }, ct);
 
+    public Task<IReadOnlyList<SandboxProbeDto>> TestSandboxAsync(string profile, CancellationToken ct = default) =>
+        PostAsync<IReadOnlyList<SandboxProbeDto>>($"api/sandboxes/{Uri.EscapeDataString(profile)}/test", new { }, ct);
+
     public Task<PruneReportDto> PruneAsync(bool dryRun, CancellationToken ct = default) => PostAsync<PruneReportDto>("api/retention/sweep", new PruneRequest(dryRun), ct);
 
     // ---- runs ----
