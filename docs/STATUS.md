@@ -25,6 +25,16 @@ one path policy that canonicalises symlinks; oversized output spilled to `.harne
 single-writer lease, torn-line tolerance, synthetic results for orphaned tool calls, fork at any sequence number,
 Markdown/JSON export, and a rebuildable SQLite index with FTS5 search.
 
+**Compaction checkpoints (phase 4)**: at the start of every run (not a resume), when the history since the last checkpoint
+is estimated (JSON length / 4) above the agent's `compaction.summarizeAfterTokens` (default: half the model profile's
+`contextWindow`, or 32,000; `0` turns it off), everything before the last `compaction.keepTurns` (default 4) user turns is
+summarised by the run's model and appended to `checkpoints.jsonl` as `{ upToSeq, ts, summary }`, with a `CHECKPOINT` event.
+The cut is always just before a user turn, so no tool call is separated from its result. The summary call goes through the
+model-call hooks and counts toward the run's tokens; it sees the previous summary plus a plain-text transcript (tool results
+clipped, oldest entries dropped when it would not fit). `FileChatHistoryProvider` sends the latest summary plus the messages
+after it; `history.jsonl` is never rewritten. In-run compaction (old tool results to stubs, the sliding turn window) still
+applies on top. A failed summary is a `RUN_STATE` notice, not a failed run.
+
 **Approvals and sandboxing (phase 2)**: `ask | allow | deny | allowlist` per tool, MCP server or skill scripts; inline,
 cross-client approvals with "always for this session"; unattended runs treat `ask` as `deny`. Approvals are durable:
 a run waiting on a person is parked in SQLite with its whole approval batch (and any answers already given) plus its
@@ -151,7 +161,6 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Phase 4:** compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.
 - **Phase 5:** ASP.NET Core Identity with passkeys and step-up, device-pairing login, scoped tokens, the PWA, Web Push.

@@ -156,6 +156,14 @@ public sealed class CompactionConfig
     public int ToolResultsAfter { get; set; } = 40;
     /// <summary>Older turns are dropped from the model's view beyond this many turns.</summary>
     public int SlidingWindowTurns { get; set; } = 30;
+    /// <summary>
+    /// When the history since the last checkpoint is estimated above this many tokens at the start of a run, everything before
+    /// the last <see cref="KeepTurns"/> user turns is summarised into a checkpoint. Unset: half the model's <c>contextWindow</c>,
+    /// or 32,000 when that is unknown. <c>0</c> turns checkpoints off.
+    /// </summary>
+    public int? SummarizeAfterTokens { get; set; }
+    /// <summary>User turns kept verbatim after a checkpoint.</summary>
+    public int KeepTurns { get; set; } = 4;
 }
 
 public sealed class AgentLimits

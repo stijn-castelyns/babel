@@ -11,7 +11,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Harness.Core.Agents;
 
 /// <summary>An agent built for one run, plus what the run needs to drive and dispose it.</summary>
-public sealed record BuiltAgent(AIAgent Agent, HookPipeline Hooks, IReadOnlyList<IRunExtension> Extensions, IReadOnlyList<AITool> Tools);
+/// <param name="Model">The run's model with hooks and usage accounting but no tools or compaction, for side calls such as checkpoint summaries.</param>
+public sealed record BuiltAgent(AIAgent Agent, HookPipeline Hooks, IReadOnlyList<IRunExtension> Extensions, IReadOnlyList<AITool> Tools, IChatClient Model);
 
 /// <summary>
 /// The single place where tools, skills, MCP, plugins, prompts, history and hooks are wired into a <see cref="ChatClientAgent"/>.
@@ -71,7 +72,8 @@ public sealed class AgentFactory(
 
         ToolCallMiddleware middleware = new(run, hooks);
         AIAgent agent = inner.AsBuilder().Use(middleware.InvokeAsync).Build();
-        return new BuiltAgent(agent, hooks, exts, [.. tools]);
+        IChatClient plain = model.AsBuilder().Use(next => new HookingChatClient(next, run, hooks)).Build();
+        return new BuiltAgent(agent, hooks, exts, [.. tools], plain);
     }
 
     /// <summary>Old tool results fade to stubs first; beyond the turn window, older turns drop out of the model's view. History on disk is never touched.</summary>

@@ -26,6 +26,8 @@ public static class EventTypes
     public const string OutputValidated = "OUTPUT_VALIDATED";
     /// <summary>An output sink delivered (or failed to deliver) the run's result.</summary>
     public const string OutputDelivered = "OUTPUT_DELIVERED";
+    /// <summary>Older history was summarised into a checkpoint in <c>checkpoints.jsonl</c>.</summary>
+    public const string Checkpoint = "CHECKPOINT";
 
     /// <summary>Live-only events are streamed but never written to <c>events.jsonl</c>.</summary>
     public static bool IsPersisted(string type) => type != TextMessageContent;

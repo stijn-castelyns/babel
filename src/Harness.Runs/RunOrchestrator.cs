@@ -426,6 +426,18 @@ public sealed class RunOrchestrator : IAsyncDisposable
             if (starting.Cancelled)
                 return Final(active, RunStates.Cancelled, null, $"Cancelled by hook: {starting.CancelReason}", run);
 
+            // A long session is summarised into a checkpoint before the turn, so the model sees the summary plus recent turns.
+            // Not on resume: the approval answers must meet their requests in the history as it was.
+            if (!request.Resumed)
+            {
+                try { await Checkpoints.MaybeWriteAsync(session, agent.Compaction, profile, built.Model, (type, data) => Emit(session, record.Id, type, data), ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex, "Writing a checkpoint for session {SessionId} failed", session.Id);
+                    Emit(session, record.Id, EventTypes.RunState, new JsonObject { ["state"] = RunStates.Running, ["notice"] = $"Could not summarise older history: {ex.Message}" });
+                }
+            }
+
             AgentSession agentSession = session.Info.AgentState is JsonElement saved
                 ? await built.Agent.DeserializeSessionAsync(saved, cancellationToken: ct)
                 : await built.Agent.CreateSessionAsync(ct);
