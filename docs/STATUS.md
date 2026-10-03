@@ -25,7 +25,11 @@ single-writer lease, torn-line tolerance, synthetic results for orphaned tool ca
 Markdown/JSON export, and a rebuildable SQLite index with FTS5 search.
 
 **Approvals and sandboxing (phase 2)**: `ask | allow | deny | allowlist` per tool, MCP server or skill scripts; inline,
-cross-client approvals with "always for this session"; unattended runs treat `ask` as `deny`. Sandbox providers
+cross-client approvals with "always for this session"; unattended runs treat `ask` as `deny`. Approvals are durable:
+a run waiting on a person is parked in SQLite with its whole approval batch (and any answers already given) plus its
+agent session state. When the daemon restarts, the approvals are pending again, approval timeouts keep counting from the
+original request, and the run resumes on its session when the last one is answered (or can be cancelled). A parked run
+is unparked before it resumes, so a crash mid-resume can never run an approved tool twice. Sandbox providers
 `none`, `bubblewrap` (namespaces unshared, read-only system dirs, private `/tmp` and home) and `container`
 (Docker/Podman with CPU, memory and PID limits). Triggered runs refuse to start unsandboxed unless allowed.
 
@@ -55,6 +59,7 @@ fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; 
 | Triggers reference a run template | Triggers name `agent`, `workspace` and `prompt` directly | Run templates, output contracts and sinks are the rest of phase 4. |
 | `network: allowlist` through an egress proxy | Treated as `none` | Fails closed until the proxy exists. |
 | Processes started from any thread | All child processes start from one dedicated thread (`ProcessSpawner`) | `bwrap --die-with-parent` uses `PR_SET_PDEATHSIG`, which fires when the forking *thread* exits; retiring thread-pool threads would kill sandboxed commands. |
+| Parked runs keep their whole `RunRequest` | Everything except per-run extra tools is kept | Extra tools (the future `submit_output`) are rebuilt from the run template when templates land. |
 | `harness` with no arguments opens the TUI | Opens line-mode chat in the current directory | The Terminal.Gui TUI is not built yet. |
 
 ## Not built yet
@@ -62,8 +67,6 @@ fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; 
 - **Phase 4:** run templates (workspace steps, `setup.sh`, `keep`), output contracts with `submit_output` and retries,
   output sinks (`reply`, `file`, `webhook`, `run`), `run-completed` source, coalescing, per-sender rate limits,
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
-- **Durable approvals across restarts:** a pending approval currently ends with the daemon (the run is marked failed on
-  start-up; history repair keeps the session usable). Parking and resuming runs from the journal is next.
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.
 - **Phase 5:** ASP.NET Core Identity with passkeys and step-up, device-pairing login, scoped tokens, the PWA, Web Push.

@@ -38,6 +38,7 @@ public sealed class TestHome : IAsyncDisposable
     public string Workspace { get; }
     public ServiceProvider? Services { get; private set; }
 
+    /// <summary>Builds the runtime. Calling it again after disposing <see cref="Services"/> simulates a daemon restart on the same home.</summary>
     public ServiceProvider Build(IChatClient model)
     {
         ServiceCollection services = new();

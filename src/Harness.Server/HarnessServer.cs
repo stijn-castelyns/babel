@@ -35,6 +35,8 @@ public static class HarnessServer
         builder.Logging.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; });
         builder.Logging.SetMinimumLevel(LogLevel.Information);
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.Agents.AI", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.Extensions.AI", LogLevel.Warning);
 
         builder.Services.ConfigureHttpJsonOptions(o =>
         {
@@ -121,6 +123,8 @@ public static class HarnessServer
             log.LogInformation("harness daemon ready · home {Home} · socket {Socket}{Api}{Hooks}", paths.Home, socket,
                 listeners.Api is null ? "" : $" · api {listeners.Api}", listeners.Webhooks is null ? "" : $" · webhooks {listeners.Webhooks}");
             if (failed > 0) log.LogWarning("{Count} run(s) were active when the daemon last stopped and are now marked failed", failed);
+            int parked = app.Services.GetRequiredService<RunOrchestrator>().RehydrateParkedRuns();
+            if (parked > 0) log.LogInformation("{Count} run(s) are still waiting for approval from before the restart", parked);
             if (listeners.Api is not null && apiToken is null) log.LogWarning("The API listener has no listeners.apiToken; every API request will be rejected");
         });
         app.Lifetime.ApplicationStopping.Register(() =>

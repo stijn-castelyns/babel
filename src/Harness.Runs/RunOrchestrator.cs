@@ -32,17 +32,20 @@ public sealed class RunOrchestrator : IAsyncDisposable
     private readonly SessionRuntimeRegistry _runtime;
     private readonly EventHub _hub;
     private readonly ApprovalBroker _approvals;
+    private readonly ApprovalStore _store;
     private readonly IServiceProvider _services;
     private readonly ILogger _log;
 
     private readonly ConcurrentDictionary<string, ActiveRun> _active = new();
+    /// <summary>Runs rehydrated after a restart that wait for approvals with no live task behind them.</summary>
+    private readonly ConcurrentDictionary<string, ParkedRequest> _parked = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionLocks = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _modelLocks = new();
     private readonly SemaphoreSlim _global;
     private readonly CancellationTokenSource _shutdown = new();
 
     public RunOrchestrator(ConfigCatalog catalog, SessionStore sessions, AgentFactory agents, SandboxFactory sandboxes, SkillsExtension skills,
-        SecretStore secrets, TrustStore trust, SessionRuntimeRegistry runtime, EventHub hub, ApprovalBroker approvals, IServiceProvider services,
+        SecretStore secrets, TrustStore trust, SessionRuntimeRegistry runtime, EventHub hub, ApprovalBroker approvals, ApprovalStore store, IServiceProvider services,
         ILoggerFactory? loggerFactory = null)
     {
         _catalog = catalog;
@@ -55,6 +58,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
         _runtime = runtime;
         _hub = hub;
         _approvals = approvals;
+        _store = store;
         _services = services;
         _log = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RunOrchestrator>();
         _global = new SemaphoreSlim(Math.Max(1, catalog.Config.Runs.GlobalConcurrency));
@@ -140,24 +144,40 @@ public sealed class RunOrchestrator : IAsyncDisposable
         return record;
     }
 
-    public Task<RunResult> WaitAsync(string runId, CancellationToken ct = default) =>
-        _active.TryGetValue(runId, out ActiveRun? run)
-            ? run.Completion.Task.WaitAsync(ct)
-            : _sessions.Index.GetRun(runId) is { } done && RunStates.IsFinal(done.State)
-                ? Task.FromResult(new RunResult { RunId = done.Id, SessionId = done.SessionId, State = done.State, Text = done.ResultText, Error = done.Error, InputTokens = done.InputTokens, OutputTokens = done.OutputTokens })
-                : throw new KeyNotFoundException($"Run '{runId}' not found.");
+    /// <summary>
+    /// Waits for a run to end. A run parked on approvals across a restart is waited for until it resumes and finishes.
+    /// When the daemon stops while a run waits for approval, the result carries the non-final state <c>awaiting_approval</c>.
+    /// </summary>
+    public async Task<RunResult> WaitAsync(string runId, CancellationToken ct = default)
+    {
+        while (true)
+        {
+            if (_active.TryGetValue(runId, out ActiveRun? run)) return await run.Completion.Task.WaitAsync(ct);
+            if (_sessions.Index.GetRun(runId) is { } done && RunStates.IsFinal(done.State))
+                return new RunResult { RunId = done.Id, SessionId = done.SessionId, State = done.State, Text = done.ResultText, Error = done.Error, InputTokens = done.InputTokens, OutputTokens = done.OutputTokens };
+            if (!_parked.ContainsKey(runId)) throw new KeyNotFoundException($"Run '{runId}' not found.");
+            await Task.Delay(100, ct);
+        }
+    }
 
     public bool Cancel(string runId)
     {
-        if (!_active.TryGetValue(runId, out ActiveRun? run)) return false;
-        run.Cancellation.Cancel();
+        if (_active.TryGetValue(runId, out ActiveRun? run))
+        {
+            run.Cancellation.Cancel();
+            _approvals.CancelRun(runId);
+            return true;
+        }
+        if (!_parked.TryRemove(runId, out _)) return false;
         _approvals.CancelRun(runId);
+        FinishParked(runId, RunStates.Cancelled, "Cancelled.");
         return true;
     }
 
     public RunRecord? Get(string runId) => _active.TryGetValue(runId, out ActiveRun? a) ? a.Record : _sessions.Index.GetRun(runId);
 
-    public IReadOnlyList<RunRecord> ActiveRuns() => [.. _active.Values.Select(a => a.Record).OrderBy(r => r.CreatedAt)];
+    public IReadOnlyList<RunRecord> ActiveRuns() =>
+        [.. _active.Values.Select(a => a.Record).Concat(_parked.Keys.Select(_sessions.Index.GetRun).OfType<RunRecord>()).OrderBy(r => r.CreatedAt)];
 
     public bool ResolveApproval(string runId, string requestId, ApprovalAnswer answer) => _approvals.Resolve(runId, requestId, answer);
 
@@ -181,6 +201,11 @@ public sealed class RunOrchestrator : IAsyncDisposable
             haveGlobal = true;
             result = await RunCoreAsync(active, session, profile, ct);
         }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested && record.State == RunStates.AwaitingApproval && _store.IsParked(record.Id))
+        {
+            // The daemon is stopping while the run waits for a person: leave it parked so it resumes after the restart.
+            result = Final(active, RunStates.AwaitingApproval, null, null);
+        }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             result = Final(active, active.TimedOut ? RunStates.TimedOut : RunStates.Cancelled, null, active.TimedOut ? "The run exceeded its time limit." : "Cancelled.");
@@ -198,6 +223,14 @@ public sealed class RunOrchestrator : IAsyncDisposable
             if (haveSession) sessionLock.Release();
         }
 
+        if (result.State == RunStates.AwaitingApproval)
+        {
+            _active.TryRemove(record.Id, out _);
+            active.Completion.TrySetResult(result);
+            return;
+        }
+
+        _store.Unpark(record.Id);
         record.State = result.State;
         record.FinishedAt = DateTimeOffset.UtcNow;
         record.Error = result.Error;
@@ -224,7 +257,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
         RunRecord record = active.Record;
         RunRequest request = active.Request;
         SetState(session, record, RunStates.Preparing);
-        record.StartedAt = DateTimeOffset.UtcNow;
+        record.StartedAt ??= DateTimeOffset.UtcNow;
 
         (AgentDefinition agent, IReadOnlyList<string> ignored) = EffectiveAgent.Resolve(_catalog.Agent(session.Info.Agent), session.Info.Workspace, _trust);
         if (ignored.Count > 0)
@@ -275,6 +308,10 @@ public sealed class RunOrchestrator : IAsyncDisposable
             FolderInstructionFiles = _catalog.Config.Prompts.FolderFiles,
         };
 
+        // A resumed run continues the usage it had before it was parked; the session already counted that part.
+        long priorInput = request.Resumed ? record.InputTokens : 0, priorOutput = request.Resumed ? record.OutputTokens : 0;
+        run.AddUsage(priorInput, priorOutput);
+
         BuiltAgent built = await _agents.BuildAsync(run, [], ct);
         try
         {
@@ -283,7 +320,10 @@ public sealed class RunOrchestrator : IAsyncDisposable
                 RunId = run.RunId, SessionId = run.SessionId, AgentName = run.AgentName, WorkspaceRoot = run.WorkspaceRoot,
                 Messages = [.. request.Messages],
             };
-            await built.Hooks.RunStartingAsync(starting, ct);
+            if (request.Resumed)
+                Emit(session, record.Id, EventTypes.RunState, new JsonObject { ["state"] = RunStates.Running, ["notice"] = "Resumed with the approval answers." });
+            else
+                await built.Hooks.RunStartingAsync(starting, ct);
             if (starting.Cancelled)
                 return Final(active, RunStates.Cancelled, null, $"Cancelled by hook: {starting.CancelReason}", run);
 
@@ -305,14 +345,26 @@ public sealed class RunOrchestrator : IAsyncDisposable
                 if (text.Length > 0) lastText = text;
                 if (approvalRequests.Count == 0) break;
 
+                // The whole batch is stored before anything is decided, so a restart mid-batch loses neither requests nor answers.
+                // The agent session is saved too: Agent Framework binds approval responses to requests kept in its state.
+                session.Info.AgentState = await built.Agent.SerializeSessionAsync(agentSession, cancellationToken: ct);
+                session.Save();
+                _store.Park(record.Id, session.Id, ParkedRequest.From(request));
+                foreach (ToolApprovalRequestContent req in approvalRequests)
+                {
+                    ApprovalInfo info = Describe(req);
+                    _store.Add(new StoredApproval(req.RequestId, record.Id, session.Id, info.ToolName, info.CallId, info.ArgumentsJson, info.Summary, DateTimeOffset.UtcNow, null));
+                }
                 SetState(session, record, RunStates.AwaitingApproval);
                 List<AIContent> responses = [];
                 foreach (ToolApprovalRequestContent req in approvalRequests)
                 {
                     ApprovalAnswer answer = await DecideAsync(req, run, built.Hooks, request, ct);
+                    _store.Decide(req.RequestId, answer);
                     if (!answer.Approved && !request.Interactive) rejected = true;
                     responses.Add(answer.Approved ? req.CreateResponse(true, answer.Reason) : req.CreateResponse(false, answer.Reason ?? "Denied."));
                 }
+                _store.Unpark(record.Id);
                 if (rejected) break;
                 next = [new ChatMessage(ChatRole.User, responses)];
             }
@@ -331,8 +383,8 @@ public sealed class RunOrchestrator : IAsyncDisposable
         finally
         {
             session.Info.Status = "idle";
-            session.Info.InputTokens += run.InputTokens;
-            session.Info.OutputTokens += run.OutputTokens;
+            session.Info.InputTokens += run.InputTokens - priorInput;
+            session.Info.OutputTokens += run.OutputTokens - priorOutput;
             session.Save();
             record.InputTokens = run.InputTokens;
             record.OutputTokens = run.OutputTokens;
@@ -399,17 +451,13 @@ public sealed class RunOrchestrator : IAsyncDisposable
     /// </summary>
     private async Task<ApprovalAnswer> DecideAsync(ToolApprovalRequestContent req, RunContext run, HookPipeline hooks, RunRequest request, CancellationToken ct)
     {
-        FunctionCallContent? call = req.ToolCall as FunctionCallContent;
-        string toolName = call?.Name ?? "unknown";
-        IReadOnlyDictionary<string, object?> args = call?.Arguments?.AsReadOnly() ?? new Dictionary<string, object?>().AsReadOnly();
-        JsonObject argsJson = JsonSerializer.SerializeToNode(args, AIJsonUtilities.DefaultOptions) as JsonObject ?? new JsonObject();
+        (string toolName, string callId, IReadOnlyDictionary<string, object?> args, JsonObject argsJson, string? summary) = Describe(req);
         string key = ApprovalPolicy.InvocationKey(toolName, args);
-        string? summary = ApprovalPolicy.MainArgument(toolName, args);
 
         JsonObject requested = new()
         {
             ["requestId"] = req.RequestId,
-            ["toolCallId"] = call?.CallId,
+            ["toolCallId"] = callId,
             ["toolName"] = toolName,
             ["arguments"] = argsJson,
             ["summary"] = summary is null ? null : run.Mask(summary),
@@ -444,7 +492,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
             PendingApproval pending = new()
             {
                 RequestId = req.RequestId, RunId = run.RunId, SessionId = run.SessionId, ToolName = toolName,
-                ToolCallId = call?.CallId ?? "", Arguments = argsJson, Summary = summary,
+                ToolCallId = callId, Arguments = argsJson, Summary = summary,
             };
             _approvals.Add(pending);
             try
@@ -477,6 +525,152 @@ public sealed class RunOrchestrator : IAsyncDisposable
             ["always"] = answer.AlwaysForSession,
         });
         return answer;
+    }
+
+    private sealed record ApprovalInfo(string ToolName, string CallId, IReadOnlyDictionary<string, object?> Arguments, JsonObject ArgumentsJson, string? Summary);
+
+    private static ApprovalInfo Describe(ToolApprovalRequestContent req)
+    {
+        FunctionCallContent? call = req.ToolCall as FunctionCallContent;
+        string toolName = call?.Name ?? "unknown";
+        IReadOnlyDictionary<string, object?> args = call?.Arguments?.AsReadOnly() ?? new Dictionary<string, object?>().AsReadOnly();
+        JsonObject argsJson = JsonSerializer.SerializeToNode(args, AIJsonUtilities.DefaultOptions) as JsonObject ?? new JsonObject();
+        return new ApprovalInfo(toolName, call?.CallId ?? "", args, argsJson, ApprovalPolicy.MainArgument(toolName, args));
+    }
+
+    // ---------------------------------------------------------------- parked runs (durable approvals)
+
+    /// <summary>
+    /// Brings back runs that were waiting for approval when the daemon stopped: their unanswered approvals become pending
+    /// again, and each run resumes on its session as soon as its last approval is answered. Returns the number of runs.
+    /// </summary>
+    public int RehydrateParkedRuns()
+    {
+        int count = 0;
+        foreach ((string runId, string sessionId, ParkedRequest parked) in _store.Parked())
+        {
+            if (_active.ContainsKey(runId)) continue;
+            if (_sessions.Index.GetRun(runId) is not { } record || RunStates.IsFinal(record.State) || _sessions.TryOpen(sessionId) is null)
+            {
+                _store.Unpark(runId);
+                continue;
+            }
+            _parked[runId] = parked;
+            count++;
+            foreach (StoredApproval row in _store.ForRun(runId).Where(r => r.Answer is null))
+            {
+                if (!parked.Interactive && parked.ApprovalTimeoutSeconds is null)
+                {
+                    AnswerParked(runId, row, new ApprovalAnswer(false, "Unattended run with no approver: 'ask' is treated as 'deny'.", "policy", "policy"));
+                    continue;
+                }
+                PendingApproval pending = new()
+                {
+                    RequestId = row.RequestId, RunId = runId, SessionId = sessionId, ToolName = row.ToolName,
+                    ToolCallId = row.ToolCallId, Arguments = row.Arguments, Summary = row.Summary, RequestedAt = row.RequestedAt,
+                };
+                _approvals.Add(pending);
+                StoredApproval captured = row;
+                _ = pending.Completion.Task.ContinueWith(t =>
+                {
+                    if (t.IsCompletedSuccessfully) AnswerParked(runId, captured, t.Result);
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+                if (parked.ApprovalTimeoutSeconds is double seconds)
+                {
+                    TimeSpan remaining = row.RequestedAt + TimeSpan.FromSeconds(seconds) - DateTimeOffset.UtcNow;
+                    ApprovalAnswer onTimeout = new(parked.OnApprovalTimeoutApprove, $"No answer within {TimeSpan.FromSeconds(seconds)}.", "timeout", "policy");
+                    _ = Task.Delay(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, _shutdown.Token)
+                        .ContinueWith(t => { if (!t.IsCanceled) _approvals.Resolve(runId, captured.RequestId, onTimeout); }, TaskScheduler.Default);
+                }
+            }
+            TryResumeParked(runId);
+        }
+        return count;
+    }
+
+    private void AnswerParked(string runId, StoredApproval row, ApprovalAnswer answer)
+    {
+        _store.Decide(row.RequestId, answer);
+        if (_sessions.TryOpen(row.SessionId) is { } session)
+            Emit(session, runId, EventTypes.ApprovalResolved, new JsonObject
+            {
+                ["requestId"] = row.RequestId,
+                ["toolName"] = row.ToolName,
+                ["approved"] = answer.Approved,
+                ["reason"] = answer.Reason,
+                ["decidedBy"] = answer.DecidedBy,
+                ["via"] = answer.Via,
+                ["always"] = answer.AlwaysForSession,
+            });
+        TryResumeParked(runId);
+    }
+
+    /// <summary>Once every approval of a parked run is answered, resumes it with the answers (or ends it, if an unattended run was denied).</summary>
+    private void TryResumeParked(string runId)
+    {
+        if (!_parked.TryGetValue(runId, out ParkedRequest? parked)) return;
+        IReadOnlyList<StoredApproval> rows = _store.ForRun(runId);
+        if (rows.Any(r => r.Answer is null)) return;
+        if (!_parked.TryRemove(runId, out _)) return;   // another answer got here first
+
+        RunRecord record = _sessions.Index.GetRun(runId)!;
+        SessionFolder session = _sessions.Open(record.SessionId);
+        Dictionary<string, ToolApprovalRequestContent> requests = [];
+        HashSet<string> wanted = [.. rows.Select(r => r.RequestId)];
+        foreach (HistoryEntry entry in session.ReadHistory().Reverse())
+        {
+            foreach (ToolApprovalRequestContent req in entry.Message.Contents.OfType<ToolApprovalRequestContent>())
+                if (wanted.Contains(req.RequestId)) requests.TryAdd(req.RequestId, req);
+            if (requests.Count == wanted.Count) break;
+        }
+        if (requests.Count != wanted.Count)
+        {
+            FinishParked(runId, RunStates.Failed, "The approval requests of this run are missing from the session history.");
+            return;
+        }
+
+        if (!parked.Interactive && rows.Any(r => r.Answer!.Approved == false))
+        {
+            FinishParked(runId, RunStates.Rejected, "An approval was denied.");
+            return;
+        }
+
+        SessionRuntimeState state = _runtime.Get(session.Id);
+        List<AIContent> responses = [];
+        foreach (StoredApproval row in rows)
+        {
+            ApprovalAnswer answer = row.Answer!;
+            ToolApprovalRequestContent req = requests[row.RequestId];
+            if (answer.Approved && answer.AlwaysForSession)
+                state.AlwaysApproved[ApprovalPolicy.InvocationKey(row.ToolName, Describe(req).Arguments)] = true;
+            responses.Add(req.CreateResponse(answer.Approved, answer.Approved ? answer.Reason : answer.Reason ?? "Denied."));
+        }
+
+        // Unpark before resuming: if the daemon dies mid-resume, approved tools must not run a second time on the next start.
+        _store.Unpark(runId);
+        RunRequest request = parked.ToRequest(session.Id, [new ChatMessage(ChatRole.User, responses)]);
+        ActiveRun active = new(record, request, CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token));
+        _active[runId] = active;
+        _ = Task.Run(() => ExecuteAsync(active, session));
+    }
+
+    private void FinishParked(string runId, string state, string error)
+    {
+        _store.Unpark(runId);
+        if (_sessions.Index.GetRun(runId) is not { } record) return;
+        record.State = state;
+        record.Error = error;
+        record.FinishedAt = DateTimeOffset.UtcNow;
+        _sessions.Index.UpsertRun(record);
+        if (_sessions.TryOpen(record.SessionId) is { } session)
+            Emit(session, runId, EventTypes.RunFinished, new JsonObject
+            {
+                ["state"] = state,
+                ["error"] = error,
+                ["inputTokens"] = record.InputTokens,
+                ["outputTokens"] = record.OutputTokens,
+            });
     }
 
     private RunResult Final(ActiveRun active, string state, string? text, string? error, RunContext? run = null) => new()

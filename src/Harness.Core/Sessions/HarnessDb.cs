@@ -47,6 +47,13 @@ public sealed class HarnessDb
                 last_tool TEXT, error TEXT, result_text TEXT);
             CREATE INDEX IF NOT EXISTS ix_runs_created ON runs(created_at);
             CREATE INDEX IF NOT EXISTS ix_runs_session ON runs(session_id);
+            CREATE TABLE IF NOT EXISTS parked_runs (
+                run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, request TEXT NOT NULL, parked_at TEXT);
+            CREATE TABLE IF NOT EXISTS pending_approvals (
+                request_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, session_id TEXT NOT NULL, tool_name TEXT, tool_call_id TEXT,
+                arguments TEXT, summary TEXT, requested_at TEXT,
+                approved INTEGER, reason TEXT, decided_by TEXT, via TEXT, always INTEGER);
+            CREATE INDEX IF NOT EXISTS ix_pending_approvals_run ON pending_approvals(run_id);
             CREATE TABLE IF NOT EXISTS trigger_events (
                 event_id TEXT NOT NULL, trigger_id TEXT NOT NULL, received_at TEXT, payload TEXT, status TEXT, run_id TEXT,
                 PRIMARY KEY (trigger_id, event_id));
@@ -208,14 +215,18 @@ public sealed class HarnessDb
         }, limit);
     }
 
-    /// <summary>Marks runs that were active when the daemon stopped as failed.</summary>
+    /// <summary>
+    /// Marks runs that were active when the daemon stopped as failed, except runs parked on an approval:
+    /// those resume when the approval is answered.
+    /// </summary>
     public int FailInterruptedRuns()
     {
         using SqliteConnection c = Open();
         using SqliteCommand cmd = c.CreateCommand();
         cmd.CommandText = """
             UPDATE runs SET state = 'failed', error = 'Daemon stopped while the run was active.', finished_at = $now
-            WHERE state IN ('queued', 'preparing', 'running', 'awaiting_approval', 'validating', 'delivering');
+            WHERE state IN ('queued', 'preparing', 'running', 'awaiting_approval', 'validating', 'delivering')
+              AND id NOT IN (SELECT run_id FROM parked_runs);
             UPDATE sessions SET status = 'idle' WHERE status <> 'idle';
             """;
         cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));

@@ -17,12 +17,21 @@ internal sealed class RunRenderer(HarnessClient client, ParseResult parse)
     public async Task<EventDto?> FollowAsync(string runId, CancellationToken ct)
     {
         EventDto? finished = null;
-        await foreach (EventDto evt in client.RunEventsAsync(runId, null, ct))
+        try
         {
-            await RenderAsync(evt, ct);
-            if (evt.Type == "RUN_FINISHED") finished = evt;
+            await foreach (EventDto evt in client.RunEventsAsync(runId, null, ct))
+            {
+                await RenderAsync(evt, ct);
+                if (evt.Type == "RUN_FINISHED") finished = evt;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        {
+            // The daemon went away mid-stream; handled below.
         }
         EndLine();
+        if (finished is null && !ct.IsCancellationRequested)
+            Line($"! lost the connection to the daemon. The run keeps its state (a run waiting for approval resumes after a restart); follow it again with 'harness runs attach {runId}'.", "yellow");
         return finished;
     }
 
@@ -61,13 +70,13 @@ internal sealed class RunRenderer(HarnessClient client, ParseResult parse)
                 break;
             case "RUN_ERROR":
                 EndLine();
-                Line($"error: {d["message"]?.GetValue<string>()}", "red");
+                Line($"error: {Output.Short(d["message"]?.GetValue<string>(), 300)}", "red");
                 break;
             case "RUN_FINISHED":
                 EndLine();
                 string state = d["state"]?.GetValue<string>() ?? "?";
                 long input = d["inputTokens"]?.GetValue<long>() ?? 0, output = d["outputTokens"]?.GetValue<long>() ?? 0;
-                string error = d["error"]?.GetValue<string>() is { } e && state != "succeeded" ? $" · {e}" : "";
+                string error = d["error"]?.GetValue<string>() is { } e && state != "succeeded" ? $" · {Output.Short(e, 300)}" : "";
                 Line($"── {state} · {Output.Tokens(input)} in / {Output.Tokens(output)} out{error}", state == "succeeded" ? "grey" : "red");
                 break;
         }

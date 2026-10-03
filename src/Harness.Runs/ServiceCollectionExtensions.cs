@@ -51,6 +51,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<EventHub>();
         services.AddSingleton<ApprovalBroker>();
+        services.AddSingleton<ApprovalStore>();
         services.AddSingleton<RunOrchestrator>();
         return services;
     }

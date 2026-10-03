@@ -19,7 +19,12 @@ public sealed record RunRequest
     /// <summary>How long an approval may wait before <see cref="OnApprovalTimeoutApprove"/> applies. Null waits indefinitely.</summary>
     public TimeSpan? ApprovalTimeout { get; init; }
     public bool OnApprovalTimeoutApprove { get; init; }
-    /// <summary>Extra tools for this run only, such as <c>submit_output</c>.</summary>
+    /// <summary>
+    /// True when this request continues a run that was parked on approvals: <see cref="Messages"/> carries the approval
+    /// responses, and run-start hooks do not fire again.
+    /// </summary>
+    public bool Resumed { get; init; }
+    /// <summary>Extra tools for this run only, such as <c>submit_output</c>. They are not kept across a restart.</summary>
     public IReadOnlyList<AITool> ExtraTools { get; init; } = [];
 }
 
