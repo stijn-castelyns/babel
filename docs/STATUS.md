@@ -59,7 +59,16 @@ the sender filter and `OnTriggerFired` hooks on its own, then waits; the window 
 windows after the first. The merged event joins the texts with newlines, combines attachments, keeps the last reply address
 and lists the originals in `{event.data.coalesced}`; every original is marked `started` with the run's id. Waiting events
 stay `pending` in the durable queue, so a restart or reload replays and re-coalesces them, and an in-memory set keeps a replay
-from running an event this daemon is already handling. Manual fires and the `run` sink never coalesce. A trigger references a run template with `template:`; its
+from running an event this daemon is already handling. Manual fires and the `run` sink never coalesce.
+
+`concurrency: { perSession, global, onBusy }` limits a trigger's runs: `global` across all its sessions, `perSession` per
+rendered session key (triggers without `session:` only have `global`). With `onBusy: queue` (default) the run is created at
+once and waits in `queued` (with a `RUN_STATE` notice) until a slot that fits its key frees up, in arrival order; it holds the
+slot through approvals and delivery until it is final, and can be cancelled while waiting. Its events stay `queued` in the
+durable queue until it gets the slot, so a restart replays them (interrupted runs are now marked failed before hosted
+services start, so the replay sees them as final). With `onBusy: drop` the event is dropped and logged with status `busy`,
+and a manual fire answers with the reason. These sit on top of the daemon-wide `runs.globalConcurrency` and per-model-profile
+`maxConcurrency` limits. A trigger references a run template with `template:`; its
 `agent:` and `prompt:` override the template's.
 
 **Run templates (phase 4)**: folders under `templates/` with a `template.yaml` (agent, sandbox, workspace steps, `keep`,
@@ -114,7 +123,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 | `git` steps | Run on the host, not in the sandbox | Clones need network and credentials the sandbox (often `network: none`) does not have; no repository code runs during a clone. |
 | `network: allowlist` through an egress proxy | Treated as `none` | Fails closed until the proxy exists. |
 | Processes started from any thread | All child processes start from one dedicated thread (`ProcessSpawner`) | `bwrap --die-with-parent` uses `PR_SET_PDEATHSIG`, which fires when the forking *thread* exits; retiring thread-pool threads would kill sandboxed commands. |
-| Parked runs keep their whole `RunRequest` | Everything except `ExtraTools` is kept | `submit_output` is rebuilt from the run template on resume; `ExtraTools` is only for programmatic callers. |
+| Parked runs keep their whole `RunRequest` | Everything except `ExtraTools` and the concurrency `Gate` is kept | `submit_output` is rebuilt from the run template on resume; `ExtraTools` is only for programmatic callers. A run resumed after a restart does not count against its trigger's `concurrency:` limits; slots are in-memory. |
 | Delivery failures | A failed sink turns `succeeded` into `failed` | The design leaves it open; valid output that never reached its destination is not a success, and the output stays in `runs/<run-id>/output`. |
 | `reply` sink | Replies through the trigger source instance (`IReplyChannel`) | The source that received the event already holds the channel's credentials; no separate registration is needed. |
 | `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
@@ -122,7 +131,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Phase 4:** concurrency limits per trigger, per-sender rate limits,
+- **Phase 4:** per-sender rate limits,
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.

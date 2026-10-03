@@ -34,6 +34,11 @@ public sealed record RunRequest
     /// responses, and run-start hooks do not fire again.
     /// </summary>
     public bool Resumed { get; init; }
+    /// <summary>
+    /// A concurrency slot the run must hold from before it starts until it reaches a final state (a trigger's
+    /// <c>concurrency:</c> limits). The run stays <c>queued</c> until it gets one. Not kept across a restart.
+    /// </summary>
+    public IRunGate? Gate { get; init; }
     /// <summary>Extra tools for this run only, such as <c>submit_output</c>. They are not kept across a restart.</summary>
     public IReadOnlyList<AITool> ExtraTools { get; init; } = [];
 }
@@ -50,4 +55,16 @@ public sealed record SessionRequest
     public string? Key { get; init; }
     public string? Model { get; init; }
     public string? TriggerId { get; init; }
+}
+
+/// <summary>A slot a run waits for before it starts and holds until it is final.</summary>
+public interface IRunGate
+{
+    /// <summary>True when the slot is free (or already held); a run that has to wait says so in a <c>RUN_STATE</c> notice.</summary>
+    bool IsFree { get; }
+    /// <summary>A short description of what the run waits for.</summary>
+    string Describe();
+    ValueTask EnterAsync(CancellationToken cancellationToken);
+    /// <summary>Frees the slot. Safe to call more than once and without having entered.</summary>
+    void Exit();
 }

@@ -127,6 +127,73 @@ public class TriggerPolicyTests
         Assert.Equal(3, Runs(home, "chat").Count);
     }
 
+    [Fact]
+    public async Task Concurrency_queues_runs_beyond_the_global_limit()
+    {
+        using ManualResetEventSlim release = new();
+        int running = 0, peak = 0;
+        List<string> prompts = [];
+        await using TestHome home = await ChatHomeAsync("concurrency: { global: 1 }", Recording(prompts, _ =>
+        {
+            int now = Interlocked.Increment(ref running);
+            InterlockedMax(ref peak, now);
+            release.Wait(TimeSpan.FromSeconds(20));
+            Interlocked.Decrement(ref running);
+            return ScriptedChatClient.Text("ok");
+        }));
+
+        RunRecord first = await home.Triggers.FireAsync("chat", "one", null, CancellationToken.None);
+        RunRecord second = await home.Triggers.FireAsync("chat", "two", null, CancellationToken.None);
+        await RunOrchestratorTests.WaitForAsync(() => home.Orchestrator.Sessions.Open(second.SessionId).ReadEvents()
+            .FirstOrDefault(e => e.Type == EventTypes.RunState && e.Data["notice"]?.ToString()?.StartsWith("Waiting for a concurrency slot of trigger 'chat'", StringComparison.Ordinal) == true));
+        Assert.Equal(RunStates.Queued, home.Orchestrator.Get(second.Id)!.State);
+
+        release.Set();
+        Assert.Equal(RunStates.Succeeded, (await home.Orchestrator.WaitAsync(first.Id).WaitAsync(TimeSpan.FromSeconds(30))).State);
+        Assert.Equal(RunStates.Succeeded, (await home.Orchestrator.WaitAsync(second.Id).WaitAsync(TimeSpan.FromSeconds(30))).State);
+        Assert.Equal(1, peak);
+
+        // A queued run can be cancelled before it ever starts.
+        release.Reset();
+        RunRecord third = await home.Triggers.FireAsync("chat", "three", null, CancellationToken.None);
+        RunRecord fourth = await home.Triggers.FireAsync("chat", "four", null, CancellationToken.None);
+        await RunOrchestratorTests.WaitForAsync(() => prompts.Contains("three") ? "ok" : null);
+        Assert.True(home.Orchestrator.Cancel(fourth.Id));
+        Assert.Equal(RunStates.Cancelled, (await home.Orchestrator.WaitAsync(fourth.Id).WaitAsync(TimeSpan.FromSeconds(30))).State);
+        release.Set();
+        Assert.Equal(RunStates.Succeeded, (await home.Orchestrator.WaitAsync(third.Id).WaitAsync(TimeSpan.FromSeconds(30))).State);
+        Assert.DoesNotContain("four", prompts);
+    }
+
+    [Fact]
+    public async Task Concurrency_drop_refuses_a_busy_session_but_serves_others()
+    {
+        using ManualResetEventSlim release = new();
+        List<string> prompts = [];
+        await using TestHome home = await ChatHomeAsync("concurrency: { perSession: 1, onBusy: drop }\nsession: \"chat:{event.sender}\"",
+            Recording(prompts, _ => { release.Wait(TimeSpan.FromSeconds(20)); return ScriptedChatClient.Text("ok"); }));
+
+        await MessagesSource.Current!.SendAsync("+1", "long task");
+        await RunOrchestratorTests.WaitForAsync(() => prompts.Contains("long task") ? "ok" : null);
+        await MessagesSource.Current!.SendAsync("+1", "are you there?");
+        await MessagesSource.Current!.SendAsync("+2", "hello");
+        await RunOrchestratorTests.WaitForAsync(() => prompts.Contains("hello") ? "ok" : null);
+        release.Set();
+        await RunOrchestratorTests.WaitForAsync(() => Runs(home, "chat").Count(r => RunStates.IsFinal(r.State)) == 2 ? "ok" : null);
+        Assert.DoesNotContain("are you there?", prompts);
+
+        // Once the first run is done, the session takes messages again.
+        await MessagesSource.Current!.SendAsync("+1", "next");
+        await RunOrchestratorTests.WaitForAsync(() => Runs(home, "chat").Count(r => RunStates.IsFinal(r.State)) == 3 ? "ok" : null);
+        Assert.Contains("next", prompts);
+    }
+
+    private static void InterlockedMax(ref int target, int value)
+    {
+        int current;
+        while ((current = Volatile.Read(ref target)) < value && Interlocked.CompareExchange(ref target, value, current) != current) { }
+    }
+
     private sealed class MessagesPlugin : IHarnessPlugin
     {
         public string Id => "test.messages";

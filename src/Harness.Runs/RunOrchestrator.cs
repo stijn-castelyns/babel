@@ -208,6 +208,12 @@ public sealed class RunOrchestrator : IAsyncDisposable
         SemaphoreSlim? modelLock = null;
         try
         {
+            if (active.Request.Gate is { } gate)
+            {
+                if (!gate.IsFree)
+                    Emit(session, record.Id, EventTypes.RunState, new JsonObject { ["state"] = RunStates.Queued, ["notice"] = $"Waiting for {gate.Describe()}." });
+                await gate.EnterAsync(ct);
+            }
             await sessionLock.WaitAsync(ct);
             haveSession = true;
             ModelProfile profile = _catalog.Model(session.Info.Model);
@@ -242,6 +248,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
 
         if (result.State == RunStates.AwaitingApproval)
         {
+            active.Request.Gate?.Exit();
             _active.TryRemove(record.Id, out _);
             active.Completion.TrySetResult(result);
             return;
@@ -284,6 +291,8 @@ public sealed class RunOrchestrator : IAsyncDisposable
         });
         _active.TryRemove(record.Id, out _);
         active.Cancellation.Dispose();
+        // A run cancelled by shutdown while it waited for its slot keeps its events queued, so they run after the restart.
+        if (!_shutdown.IsCancellationRequested) active.Request.Gate?.Exit();
         active.Completion.TrySetResult(result);
         RaiseCompleted(result);
     }

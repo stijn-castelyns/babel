@@ -40,6 +40,7 @@ public sealed class TriggerDefinition
     /// example <c>5s</c>. The window restarts with every event, up to six windows after the first.
     /// </summary>
     public string? Coalesce { get; set; }
+    public TriggerConcurrency Concurrency { get; set; } = new();
 
     [YamlDotNet.Serialization.YamlIgnore]
     public string SourceType => Source["type"]?.GetValue<string>() ?? "manual";
@@ -80,6 +81,8 @@ public sealed class TriggerDefinition
         }
         if (Coalesce is { } coalesce && Duration(coalesce, "coalesce") <= TimeSpan.Zero) throw new ConfigException("coalesce must be positive.");
         if (Approvals.Timeout is { } timeout) Duration(timeout, "approvals.timeout");
+        if (Concurrency.Global is < 1 || Concurrency.PerSession is < 1) throw new ConfigException("concurrency limits must be at least 1.");
+        if (Concurrency.OnBusy is not ("queue" or "drop")) throw new ConfigException($"concurrency.onBusy must be queue or drop, not '{Concurrency.OnBusy}'.");
     }
 }
 
@@ -87,6 +90,20 @@ public sealed class TriggerFilter
 {
     /// <summary>Sender allowlist; when set, everything else is dropped and logged.</summary>
     public List<string> Senders { get; set; } = [];
+}
+
+/// <summary><c>concurrency: { perSession: 1, global: 2, onBusy: queue }</c>.</summary>
+public sealed class TriggerConcurrency
+{
+    /// <summary>Runs of this trigger per session key at once (only for triggers with <c>session:</c>).</summary>
+    public int? PerSession { get; set; }
+    /// <summary>Runs of this trigger at once, across all sessions.</summary>
+    public int? Global { get; set; }
+    /// <summary>
+    /// <c>queue</c> (default): the run waits in the <c>queued</c> state until a slot frees up. <c>drop</c>: the event is dropped
+    /// and logged (status <c>busy</c>).
+    /// </summary>
+    public string OnBusy { get; set; } = "queue";
 }
 
 public sealed class TriggerApprovals

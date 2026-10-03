@@ -113,11 +113,12 @@ public static class HarnessServer
         ApiEndpoints.Map(app);
         app.Map("/hooks/{**path}", (string path, HttpContext http, TriggerEngine triggers) => triggers.HandleWebhookAsync(path, http));
 
+        // Before any hosted service starts: the trigger engine replays queued events, and must see the runs they belonged to as failed.
+        int failed = app.Services.GetRequiredService<HarnessDb>().FailInterruptedRuns();
         app.Lifetime.ApplicationStarted.Register(() =>
         {
             if (!OperatingSystem.IsWindows() && File.Exists(socket))
                 File.SetUnixFileMode(socket, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            int failed = app.Services.GetRequiredService<HarnessDb>().FailInterruptedRuns();
             ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Harness");
             log.LogInformation("harness daemon ready · home {Home} · socket {Socket}{Api}{Hooks}", paths.Home, socket,
                 listeners.Api is null ? "" : $" · api {listeners.Api}", listeners.Webhooks is null ? "" : $" · webhooks {listeners.Webhooks}");

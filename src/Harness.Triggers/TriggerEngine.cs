@@ -91,8 +91,10 @@ public sealed class TriggerEngine : IHostedService
         foreach (TriggerDefinition def in _definitions.Values.Where(IsEnabled))
             await StartSourceAsync(def, cancellationToken);
         // Events that arrived but never started a run (a crash or restart in between) are processed now.
-        foreach (TriggerEvent pending in _queue.Pending())
-            _ = ProcessAsync(pending, coalesce: true, CancellationToken.None);
+        // A queued event whose run is still waiting (a reload, not a restart) is left to that run.
+        foreach ((TriggerEvent pending, string? runId) in _queue.Pending())
+            if (runId is null || _runs.Get(runId) is not { } run || RunStates.IsFinal(run.State))
+                _ = ProcessAsync(pending, coalesce: true, CancellationToken.None);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -270,6 +272,7 @@ public sealed class TriggerEngine : IHostedService
     }
 
     private const int CoalesceCap = 6;
+    private readonly ConcurrentDictionary<string, TriggerSlots> _slots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Batch> _batches = new(StringComparer.Ordinal);
     private readonly Lock _batchGate = new();
     /// <summary>Queued events this daemon is already working on, so a reload's replay of pending events cannot run them twice.</summary>
@@ -412,24 +415,60 @@ public sealed class TriggerEngine : IHostedService
             string prompt = TemplateVariables.Render(def.Prompt ?? template?.Prompt ?? "{event.text}", vars);
             if (prompt.Trim().Length == 0) prompt = $"Trigger {def.Id} fired.";
 
+            string? key = def.Session is { } keyTemplate ? TemplateVariables.Render(keyTemplate, vars) : null;
             string runId = Ids.NewRunId();
-            SessionFolder session = SessionFor(def, template, evt, vars, runId);
-            TimeSpan? approvalTimeout = def.Approvals.Timeout is { } t ? Durations.Parse(t) : null;
-            RunRecord run = _runs.Start(new RunRequest
+            TriggerSlots.Gate? gate = null;
+            bool entered = false;
+            if (def.Concurrency.Global is not null || (def.Concurrency.PerSession is not null && key is not null))
             {
-                RunId = runId,
-                SessionId = session.Id,
-                Messages = [new ChatMessage(ChatRole.User, prompt)],
-                Template = template is null ? null : new TemplateRun(template.Name, vars),
-                Delivery = (def.Sinks ?? OutputDelivery.Normalize(template?.Output.Sinks)) is { Count: > 0 } sinks ? new DeliveryPlan(sinks, vars) : null,
-                Interactive = false,
-                TriggerId = def.Id,
-                ReplyTo = evt.ReplyTo,
-                AllowUnsandboxed = def.AllowUnsandboxed,
-                ApprovalTimeout = approvalTimeout,
-                OnApprovalTimeoutApprove = def.Approvals.OnTimeout == "approve",
-            });
-            foreach (Accepted a in events) _queue.Mark(a.Queued, "started", run.Id);
+                TriggerSlots slots = _slots.GetOrAdd(def.Id, id => new TriggerSlots(id));
+                slots.Global = def.Concurrency.Global;
+                slots.PerSession = def.Concurrency.PerSession;
+                if (def.Concurrency.OnBusy == "drop")
+                {
+                    if (!slots.TryTake(key))
+                    {
+                        _log.LogWarning("Trigger {Id}: busy ({Active} runs active); event {EventId} dropped", def.Id, slots.Active, evt.EventId);
+                        foreach (Accepted a in events) _queue.Mark(a.Queued, "busy");
+                        return Task.FromResult(new Outcome(null, "busy", $"trigger '{def.Id}' is at its concurrency limit"));
+                    }
+                    entered = true;
+                }
+                gate = new TriggerSlots.Gate(slots, key, entered,
+                    onEntered: () => { foreach (Accepted a in events) _queue.Mark(a.Queued, "started", runId); },
+                    onAbandoned: () => { foreach (Accepted a in events) _queue.Mark(a.Queued, "cancelled", runId); });
+                // Until the run gets its slot its events stay 'queued': if the daemon stops first, they run on the next start.
+                if (!entered) foreach (Accepted a in events) _queue.Mark(a.Queued, "queued", runId);
+            }
+
+            SessionFolder session;
+            RunRecord run;
+            try
+            {
+                session = SessionFor(def, template, evt, vars, key, runId);
+                TimeSpan? approvalTimeout = def.Approvals.Timeout is { } t ? Durations.Parse(t) : null;
+                run = _runs.Start(new RunRequest
+                {
+                    RunId = runId,
+                    SessionId = session.Id,
+                    Messages = [new ChatMessage(ChatRole.User, prompt)],
+                    Template = template is null ? null : new TemplateRun(template.Name, vars),
+                    Delivery = (def.Sinks ?? OutputDelivery.Normalize(template?.Output.Sinks)) is { Count: > 0 } sinks ? new DeliveryPlan(sinks, vars) : null,
+                    Interactive = false,
+                    TriggerId = def.Id,
+                    ReplyTo = evt.ReplyTo,
+                    AllowUnsandboxed = def.AllowUnsandboxed,
+                    ApprovalTimeout = approvalTimeout,
+                    OnApprovalTimeoutApprove = def.Approvals.OnTimeout == "approve",
+                    Gate = gate,
+                });
+            }
+            catch
+            {
+                gate?.Exit();
+                throw;
+            }
+            if (gate is null || entered) foreach (Accepted a in events) _queue.Mark(a.Queued, "started", run.Id);
             _queue.RecordFire(def.Id, evt.ReceivedAt, run.Id);
             return Task.FromResult(new Outcome(run, "started"));
         }
@@ -441,9 +480,8 @@ public sealed class TriggerEngine : IHostedService
         }
     }
 
-    private SessionFolder SessionFor(TriggerDefinition def, RunTemplate? template, TriggerEvent evt, IReadOnlyDictionary<string, string> vars, string runId)
+    private SessionFolder SessionFor(TriggerDefinition def, RunTemplate? template, TriggerEvent evt, IReadOnlyDictionary<string, string> vars, string? key, string runId)
     {
-        string? key = def.Session is { } keyTemplate ? TemplateVariables.Render(keyTemplate, vars) : null;
         if (key is not null && _runs.Sessions.FindByKey(key) is { } existing) return existing;
         string workspace = template is not null
             ? _workspaces.WorkspaceFor(runId)

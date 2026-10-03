@@ -29,15 +29,19 @@ public sealed class TriggerQueue(HarnessDb db)
         return cmd.ExecuteNonQuery() == 1;
     }
 
-    public IReadOnlyList<TriggerEvent> Pending()
+    /// <summary>
+    /// Events that never started a run: still <c>pending</c>, or <c>queued</c> behind a concurrency limit (with the id of the run
+    /// that was waiting for them).
+    /// </summary>
+    public IReadOnlyList<(TriggerEvent Event, string? RunId)> Pending()
     {
         using SqliteConnection c = db.Open();
         using SqliteCommand cmd = c.CreateCommand();
-        cmd.CommandText = "SELECT payload FROM trigger_events WHERE status = 'pending' ORDER BY received_at";
-        List<TriggerEvent> events = [];
+        cmd.CommandText = "SELECT payload, run_id FROM trigger_events WHERE status IN ('pending', 'queued') ORDER BY received_at";
+        List<(TriggerEvent, string?)> events = [];
         using SqliteDataReader r = cmd.ExecuteReader();
         while (r.Read())
-            if (JsonSerializer.Deserialize<TriggerEvent>(r.GetString(0), Json) is { } evt) events.Add(evt);
+            if (JsonSerializer.Deserialize<TriggerEvent>(r.GetString(0), Json) is { } evt) events.Add((evt, r.IsDBNull(1) ? null : r.GetString(1)));
         return events;
     }
 
