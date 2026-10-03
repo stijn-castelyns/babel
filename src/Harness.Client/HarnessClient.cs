@@ -82,6 +82,17 @@ public sealed class HarnessClient : IDisposable
 
     public Task<SessionDto> ForkAsync(string sessionId, ForkRequest request, CancellationToken ct = default) => PostAsync<SessionDto>($"api/sessions/{sessionId}/fork", request, ct);
 
+    public async Task<SessionDto> RenameSessionAsync(string sessionId, string title, CancellationToken ct = default)
+    {
+        HttpResponseMessage response = await _http.PatchAsJsonAsync($"api/sessions/{sessionId}", new UpdateSessionRequest(title), Json, ct);
+        await EnsureAsync(response, ct);
+        return (await response.Content.ReadFromJsonAsync<SessionDto>(Json, ct))!;
+    }
+
+    /// <summary>Fuzzy path completion in a session's workspace, for <c>@</c> mentions.</summary>
+    public Task<IReadOnlyList<string>> SessionFilesAsync(string sessionId, string query, CancellationToken ct = default) =>
+        GetAsync<IReadOnlyList<string>>($"api/sessions/{sessionId}/files?q={Uri.EscapeDataString(query)}", ct);
+
     public async Task DeleteSessionAsync(string sessionId, CancellationToken ct = default) =>
         await EnsureAsync(await _http.DeleteAsync($"api/sessions/{sessionId}", ct), ct);
 

@@ -87,6 +87,24 @@ internal static class ApiEndpoints
                 : Results.Text(Mapping.ToMarkdown(s.Info, s.ReadHistory()), "text/markdown");
         });
 
+        api.MapPatch("/sessions/{id}", (string id, UpdateSessionRequest body, SessionStore sessions) =>
+        {
+            if (sessions.TryOpen(id) is not { } s) return NotFound("Session", id);
+            if (body.Title is { } title)
+            {
+                if (string.IsNullOrWhiteSpace(title)) return Results.BadRequest(new ErrorDto("Title must not be empty."));
+                s.Info.Title = title.Trim().ReplaceLineEndings(" ");
+                s.Save();
+            }
+            return Results.Ok(s.Info.ToDto());
+        });
+
+        // '@' completion in the TUI composer: paths in the session's own workspace, whichever way it was opened.
+        api.MapGet("/sessions/{id}/files", (string id, string? q, SessionStore sessions) =>
+            sessions.TryOpen(id) is { } s && Directory.Exists(s.Info.Workspace)
+                ? Results.Ok(FileCompletion.Match(s.Info.Workspace, q ?? "", 20))
+                : NotFound("Session", id));
+
         api.MapDelete("/sessions/{id}", (string id, SessionStore sessions) =>
             sessions.Delete(id) ? Results.NoContent() : NotFound("Session", id));
 

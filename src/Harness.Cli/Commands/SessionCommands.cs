@@ -72,6 +72,18 @@ internal static class SessionCommands
         }));
         sessions.Subcommands.Add(export);
 
+        Argument<string[]> title = new("title") { Arity = ArgumentArity.OneOrMore, Description = "New title" };
+        Command rename = new("rename", "Rename a session.") { id, title };
+        rename.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            SessionDto s = await c.RenameSessionAsync(p.GetValue(id)!, string.Join(' ', p.GetValue(title)!), ct);
+            if (p.GetValue(CliContext.Json)) Output.Json(s);
+            else Console.WriteLine(s.Title);
+            return 0;
+        }));
+        sessions.Subcommands.Add(rename);
+
         Command delete = new("delete", "Delete a session and its files.") { id };
         delete.SetAction((p, ct) => HarnessCli.Guard(async () =>
         {

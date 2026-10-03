@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>The interactive terminal UI: a pure client of the daemon API. State, keymap and transcript logic live in Harness.Tui.State and need no terminal.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Harness.Client\Harness.Client.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Terminal.Gui" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Harness.Tests" />
+  </ItemGroup>
+</Project>

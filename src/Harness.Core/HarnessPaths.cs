@@ -17,6 +17,7 @@ public sealed class HarnessPaths
     public string TrustFile => Path.Combine(Home, "trust.json");
     public string SecretsFile => Path.Combine(Home, "secrets.json");
     public string McpFile => Path.Combine(Home, "mcp.json");
+    public string TuiFile => Path.Combine(Home, "tui.yaml");
     public string GlobalAgentsMd => Path.Combine(Home, "AGENTS.md");
     public string AgentsDir => Path.Combine(Home, "agents");
     public string PromptsDir => Path.Combine(Home, "prompts");

@@ -24,8 +24,8 @@ public static class HarnessCli
         root.Subcommands.Add(TriggerCommands.Create());
         foreach (Command c in LocalCommands.Create()) root.Subcommands.Add(c);
 
-        // 'harness' with no arguments opens a chat in the current directory until the full-screen TUI lands.
-        root.SetAction((p, ct) => ChatCommand.RunAsync(p, null, ct));
+        // 'harness' with no arguments opens the full-screen TUI; piped, with --plain or on a dumb terminal, line-mode chat.
+        root.SetAction((p, ct) => TuiLauncher.Wanted(p) ? TuiLauncher.RunAsync(p, b => b, ct) : ChatCommand.RunAsync(p, null, ct));
         return root;
     }
 

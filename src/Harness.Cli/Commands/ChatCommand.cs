@@ -20,7 +20,18 @@ internal static class ChatCommand
     public static Command Create()
     {
         Command chat = new("chat", "Chat with an agent in this directory (or a named workspace).") { Message, Agent, Workspace, Resume, Continue, Model };
-        chat.SetAction((p, ct) => RunAsync(p, p.GetValue(Message), ct));
+        chat.SetAction((p, ct) =>
+        {
+            // Interactively in a terminal, the TUI's session view; a message argument, a pipe or --plain keep line mode.
+            if (p.GetValue(Message) is not { Length: > 0 } && TuiLauncher.Wanted(p))
+                return TuiLauncher.RunAsync(p, b => b with
+                {
+                    SessionId = p.GetValue(Resume),
+                    Continue = p.GetValue(Continue),
+                    NewSession = TuiLauncher.DefaultSession(p, p.GetValue(Agent), p.GetValue(Workspace), p.GetValue(Model)),
+                }, ct);
+            return RunAsync(p, p.GetValue(Message), ct);
+        });
         return chat;
     }
 

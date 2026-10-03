@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\Harness.Client\Harness.Client.csproj" />
+    <ProjectReference Include="..\Harness.Tui\Harness.Tui.csproj" />
     <!-- Local commands (init, trust, secrets, models doctor) work on the harness home without a daemon. -->
     <ProjectReference Include="..\Harness.Runs\Harness.Runs.csproj" />
   </ItemGroup>

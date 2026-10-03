@@ -10,6 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Harness\Harness.csproj" />
+    <ProjectReference Include="..\..\src\Harness.Tui\Harness.Tui.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

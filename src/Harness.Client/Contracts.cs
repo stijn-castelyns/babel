@@ -13,6 +13,8 @@ public sealed record CreateSessionRequest(
     string? Agent = null, string? Workspace = null, string? WorkspaceName = null, string? WorkingDirectory = null,
     string? Title = null, string? Model = null);
 
+public sealed record UpdateSessionRequest(string? Title = null);
+
 public sealed record SendMessageRequest(string Text);
 
 public sealed record SendMessageResponse(string RunId, string SessionId);

@@ -76,7 +76,9 @@ internal static class RunCommands
         runs.Subcommands.Add(output);
 
         Command attach = new("attach", "Follow a run live and answer its approvals.") { id };
-        attach.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        attach.SetAction((p, ct) => TuiLauncher.Wanted(p)
+            ? TuiLauncher.RunAsync(p, b => b with { Start = Harness.Tui.Screen.RunDetail, RunId = p.GetValue(id) }, ct)
+            : HarnessCli.Guard(async () =>
         {
             using HarnessClient c = CliContext.Connect(p);
             EventDto? done = await new RunRenderer(c, p).FollowAsync(p.GetValue(id)!, ct);
@@ -95,7 +97,9 @@ internal static class RunCommands
         runs.Subcommands.Add(cancel);
 
         Command watch = new("watch", "Live table of active and recent runs.");
-        watch.SetAction((p, ct) => HarnessCli.Guard(() => WatchAsync(p, ct)));
+        watch.SetAction((p, ct) => TuiLauncher.Wanted(p)
+            ? TuiLauncher.RunAsync(p, b => b with { Start = Harness.Tui.Screen.Runs }, ct)
+            : HarnessCli.Guard(() => WatchAsync(p, ct)));
         runs.Subcommands.Add(watch);
         return runs;
     }

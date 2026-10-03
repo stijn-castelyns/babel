@@ -10,6 +10,7 @@
     <Project Path="src/Harness.Server/Harness.Server.csproj" />
     <Project Path="src/Harness.Tools/Harness.Tools.csproj" />
     <Project Path="src/Harness.Triggers/Harness.Triggers.csproj" />
+    <Project Path="src/Harness.Tui/Harness.Tui.csproj" />
     <Project Path="src/Harness/Harness.csproj" />
   </Folder>
   <Folder Name="/tests/">

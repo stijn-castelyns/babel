@@ -160,6 +160,16 @@ which the next run also sees as `{event.data}`; chains stop after 5 runs). Plugi
 Each delivery emits `OUTPUT_DELIVERED`; when a sink fails, a run with valid output ends `failed` ("Output was valid but
 delivery failed: …") and keeps its output. `GET /api/templates` and `harness templates ls` list the run templates.
 
+**Terminal UI (in progress)**: `Harness.Tui` (Terminal.Gui 2.5.0) is a pure client of the daemon through `Harness.Client`.
+`harness` with no arguments, `harness chat` without a message, `harness runs watch` and `harness runs attach <id>` open it in
+a terminal; piped output, `--plain`, `--json` or `TERM=dumb` keep the line-mode commands. Layout: a sidebar (sessions grouped
+by workspace with a Triggered group, filter and badges; live runs below), the main pane (transcript and composer, or the
+runs, run detail, approvals and triggers views) and a status bar. The transcript streams assistant text, folds tool calls,
+and shows pending approvals as cards answered inline (`a`, `d` with a reason, `A`). State lives in `Harness.Tui.State`
+(keymap, store/reducer, transcript model, renderer, composer logic), which needs no terminal and is unit-tested.
+New API: `PATCH /api/sessions/{id}` (rename, also `harness sessions rename`) and `GET /api/sessions/{id}/files?q=` (`@`
+completion in the session's workspace).
+
 ## Deviations from the design
 
 | Design | Implementation | Why |
@@ -179,7 +189,6 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 | Delivery failures | A failed sink turns `succeeded` into `failed` | The design leaves it open; valid output that never reached its destination is not a success, and the output stays in `runs/<run-id>/output`. |
 | `reply` sink | Replies through the trigger source instance (`IReplyChannel`) | The source that received the event already holds the channel's credentials; no separate registration is needed. |
 | `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
-| `harness` with no arguments opens the TUI | Opens line-mode chat in the current directory | The Terminal.Gui TUI is not built yet. |
 
 ## Not built yet
 
