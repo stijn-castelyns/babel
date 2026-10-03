@@ -194,7 +194,7 @@ public sealed class FileTools(IWorkspace workspace, SessionRuntimeState state)
         Remember(full, output);
 
         int startLine = text.AsSpan(0, first).Count('\n') + 1;
-        return $"edited {workspace.Display(full)} · {(replaceAll ? count : 1)} replacement{(count > 1 && replaceAll ? "s" : "")} · at line {startLine}\n" + Diff(old, @new, startLine);
+        return $"edited {workspace.Display(full)} · {(replaceAll ? count : 1)} replacement{(count > 1 && replaceAll ? "s" : "")} · at line {startLine}\n" + Diff(text, first, old, @new);
     }
 
     [Description("Create a file or overwrite it completely. Overwriting requires reading the file first.")]
@@ -231,15 +231,28 @@ public sealed class FileTools(IWorkspace workspace, SessionRuntimeState state)
     private void Remember(string full, byte[] bytes) =>
         state.Reads[full] = new FileReadState(Workspace.Hash(bytes), state.Turn, 0, 0);
 
-    private static string Diff(string old, string @new, int startLine)
+    /// <summary>The first replacement as whole lines (<c>-</c> before, <c>+</c> after) with one line of context on each side.</summary>
+    private static string Diff(string text, int index, string old, string @new)
     {
+        int lineStart = index == 0 ? 0 : text.LastIndexOf('\n', index - 1) + 1;
+        int end = index + old.Length;
+        int lineEnd = text.IndexOf('\n', end > index && text[end - 1] == '\n' ? end - 1 : end);
+        if (lineEnd < 0) lineEnd = text.Length;
+        string prefix = text[lineStart..index], suffix = text[end..lineEnd];
+        string[] before = SplitLines(text[..lineStart]), after = SplitLines(lineEnd < text.Length ? text[(lineEnd + 1)..] : "");
+
         StringBuilder sb = new();
-        string[] oldLines = SplitLines(old), newLines = SplitLines(@new);
         const int MaxShown = 12;
-        foreach (string l in oldLines.Take(MaxShown)) sb.Append("- ").Append(l).Append('\n');
-        if (oldLines.Length > MaxShown) sb.Append($"- … {oldLines.Length - MaxShown} more lines\n");
-        foreach (string l in newLines.Take(MaxShown)) sb.Append("+ ").Append(l).Append('\n');
-        if (newLines.Length > MaxShown) sb.Append($"+ … {newLines.Length - MaxShown} more lines\n");
+        void Block(char mark, string body)
+        {
+            string[] lines = SplitLines(body);
+            foreach (string l in lines.Take(MaxShown)) sb.Append(mark).Append(' ').Append(l.TrimEnd('\r')).Append('\n');
+            if (lines.Length > MaxShown) sb.Append(mark).Append($" … {lines.Length - MaxShown} more lines\n");
+        }
+        if (before.Length > 0) sb.Append("  ").Append(before[^1].TrimEnd('\r')).Append('\n');
+        Block('-', prefix + old + suffix);
+        Block('+', prefix + @new + suffix);
+        if (after.Length > 0) sb.Append("  ").Append(after[0].TrimEnd('\r')).Append('\n');
         return sb.ToString();
     }
 

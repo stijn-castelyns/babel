@@ -528,8 +528,11 @@ public sealed class RunOrchestrator : IAsyncDisposable
                 : new Dictionary<string, object?>();
     }
 
+    private int _disposed;
+
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         _shutdown.Cancel();
         Task[] pending = [.. _active.Values.Select(a => (Task)a.Completion.Task)];
         await Task.WhenAny(Task.WhenAll(pending), Task.Delay(TimeSpan.FromSeconds(10)));

@@ -21,8 +21,36 @@ public static class Yaml
         .Build();
 
     /// <summary>Deserializes YAML, rejecting unknown keys so typos surface as errors.</summary>
-    public static T Parse<T>(string yaml) where T : new() =>
-        string.IsNullOrWhiteSpace(yaml) ? new T() : Strict.Deserialize<T>(yaml) ?? new T();
+    public static T Parse<T>(string yaml) where T : new()
+    {
+        T value = string.IsNullOrWhiteSpace(yaml) ? new T() : Strict.Deserialize<T>(yaml) ?? new T();
+        FillNulls(value);
+        return value;
+    }
+
+    /// <summary>
+    /// A key with an empty value (for example a section that only holds comments) deserializes to null.
+    /// Replace such nulls with the property's default so callers never see a missing section.
+    /// </summary>
+    internal static void FillNulls(object? target)
+    {
+        if (target is null) return;
+        Type type = target.GetType();
+        if (target is System.Collections.IDictionary dict)
+        {
+            foreach (object? v in dict.Values) FillNulls(v);
+            return;
+        }
+        if (type.Namespace != typeof(Yaml).Namespace) return;
+        object? defaults = type.GetConstructor(Type.EmptyTypes)?.Invoke(null);
+        foreach (System.Reflection.PropertyInfo prop in type.GetProperties())
+        {
+            if (!prop.CanRead || !prop.CanWrite || prop.GetIndexParameters().Length > 0 || prop.PropertyType.IsValueType) continue;
+            object? current = prop.GetValue(target);
+            if (current is null && defaults is not null && prop.GetValue(defaults) is { } fallback) prop.SetValue(target, fallback);
+            else FillNulls(current);
+        }
+    }
 
     public static T Load<T>(string path) where T : new()
     {

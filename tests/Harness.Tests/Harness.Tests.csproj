@@ -9,7 +9,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Harness.Runs\Harness.Runs.csproj" />
+    <ProjectReference Include="..\..\src\Harness\Harness.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

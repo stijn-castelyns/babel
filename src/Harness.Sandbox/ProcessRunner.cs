@@ -17,9 +17,8 @@ public static class ProcessRunner
         psi.StandardErrorEncoding = Encoding.UTF8;
 
         Stopwatch clock = Stopwatch.StartNew();
-        using Process process = new() { StartInfo = psi };
         HeadTailBuffer buffer = new(request.OutputHeadTailBytes, spillDirectory);
-        process.Start();
+        using Process process = ProcessSpawner.Start(psi);
 
         Task pumpOut = PumpAsync(process.StandardOutput, buffer);
         Task pumpErr = PumpAsync(process.StandardError, buffer);
@@ -157,7 +156,6 @@ internal sealed class LocalSandboxProcess(Process process, Func<ValueTask>? onDi
     {
         psi.RedirectStandardInput = psi.RedirectStandardOutput = psi.RedirectStandardError = true;
         psi.UseShellExecute = false;
-        Process process = Process.Start(psi) ?? throw new InvalidOperationException($"Could not start {psi.FileName}.");
-        return new LocalSandboxProcess(process, onDispose);
+        return new LocalSandboxProcess(ProcessSpawner.Start(psi), onDispose);
     }
 }

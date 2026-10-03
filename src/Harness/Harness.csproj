@@ -12,4 +12,7 @@
     <ProjectReference Include="..\Harness.Cli\Harness.Cli.csproj" />
     <ProjectReference Include="..\Harness.Server\Harness.Server.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 </Project>

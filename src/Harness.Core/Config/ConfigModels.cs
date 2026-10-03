@@ -54,6 +54,10 @@ public sealed class ListenersConfig
     public string? Webhooks { get; set; }
     /// <summary>Bearer token accepted on the API listener until passkey auth lands (a <c>secret:</c> or <c>env:</c> reference).</summary>
     public string? ApiToken { get; set; }
+    /// <summary>PFX certificate for an <c>https://</c> API listener.</summary>
+    public string? ApiCertificate { get; set; }
+    /// <summary>Password of <see cref="ApiCertificate"/> (a <c>secret:</c> or <c>env:</c> reference).</summary>
+    public string? ApiCertificatePassword { get; set; }
 }
 
 public sealed class PromptConfig
