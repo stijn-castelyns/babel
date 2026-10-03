@@ -79,7 +79,16 @@ fires, chained runs and events without a sender are never limited.
 unless `timeZone:` is set), counted from the run index plus the live usage of active runs. Once it is spent, events are
 dropped with status `over_budget` and manual fires are refused with the reason. A run that starts while budget remains gets
 the rest as its token limit (the lower of that and the agent's or template's `maxTokens`), and fails with "Trigger 'x' used up
-its daily token budget" when it reaches it. `harness triggers ls` shows today's usage against the budget. A trigger references a run template with `template:`; its
+its daily token budget" when it reaches it. `harness triggers ls` shows today's usage against the budget.
+
+**Retention (phase 4)**: `config.yaml` `retention: { sessions, interactiveSessions, runs, events, interval }` (ages such as
+`30d`, or `never`; everything but `events: 30d` defaults to `never`) and a trigger's own `retention: { sessions, runs }`. The
+daemon sweeps every `interval` (first sweep 30 s after start, once parked runs are back): sessions idle longer than their age
+are deleted with their run records and run folders, unless they have an active or non-final run; run folders
+(`runs/<run-id>/`, workspace and output files) of runs finished longer ago than `runs` are deleted, as are folders whose run
+record is gone; handled trigger events older than `events` are forgotten (pending and queued ones are kept). `runs/scratch`
+is never touched. `harness sessions prune [--dry-run]` (`POST /api/retention/sweep`) sweeps on demand and lists what it
+removed. A trigger references a run template with `template:`; its
 `agent:` and `prompt:` override the template's.
 
 **Run templates (phase 4)**: folders under `templates/` with a `template.yaml` (agent, sandbox, workspace steps, `keep`,
@@ -142,7 +151,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Phase 4:** retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
+- **Phase 4:** compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.
 - **Phase 5:** ASP.NET Core Identity with passkeys and step-up, device-pairing login, scoped tokens, the PWA, Web Push.

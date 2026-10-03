@@ -46,6 +46,7 @@ public static class HarnessServer
         builder.Services.AddHarnessRuntime(paths);
         builder.Services.AddHarnessTriggers();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<TriggerEngine>());
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<Retention>());
         configure?.Invoke(builder.Services);
 
         if (File.Exists(socket)) File.Delete(socket);   // stale socket from a previous run

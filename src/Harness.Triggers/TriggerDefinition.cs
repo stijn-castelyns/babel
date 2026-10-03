@@ -43,6 +43,8 @@ public sealed class TriggerDefinition
     public TriggerConcurrency Concurrency { get; set; } = new();
     public TriggerRateLimit RateLimit { get; set; } = new();
     public TriggerBudget Budget { get; set; } = new();
+    /// <summary>Overrides <c>retention.sessions</c> and <c>retention.runs</c> from <c>config.yaml</c> for this trigger's runs.</summary>
+    public TriggerRetention Retention { get; set; } = new();
 
     [YamlDotNet.Serialization.YamlIgnore]
     public string SourceType => Source["type"]?.GetValue<string>() ?? "manual";
@@ -84,6 +86,8 @@ public sealed class TriggerDefinition
         if (Coalesce is { } coalesce && Duration(coalesce, "coalesce") <= TimeSpan.Zero) throw new ConfigException("coalesce must be positive.");
         if (Approvals.Timeout is { } timeout) Duration(timeout, "approvals.timeout");
         if (Concurrency.Global is < 1 || Concurrency.PerSession is < 1) throw new ConfigException("concurrency limits must be at least 1.");
+        RetentionConfig.Age(Retention.Sessions, "retention.sessions");
+        RetentionConfig.Age(Retention.Runs, "retention.runs");
         if (Budget.DailyTokens is < 1) throw new ConfigException("budget.dailyTokens must be positive.");
         if (Budget.TimeZone is { } zone) _ = TriggerBudget.Zone(zone);
         if (RateLimit.PerSender is { } perSender) _ = TriggerRateLimit.Parse(perSender);
@@ -95,6 +99,15 @@ public sealed class TriggerFilter
 {
     /// <summary>Sender allowlist; when set, everything else is dropped and logged.</summary>
     public List<string> Senders { get; set; } = [];
+}
+
+/// <summary><c>retention: { sessions: 30d, runs: 7d }</c>; <c>never</c> keeps them.</summary>
+public sealed class TriggerRetention
+{
+    /// <summary>Delete this trigger's sessions this long after their last activity.</summary>
+    public string? Sessions { get; set; }
+    /// <summary>Delete this trigger's run folders (workspace and output files) this long after the run finished.</summary>
+    public string? Runs { get; set; }
 }
 
 /// <summary><c>budget: { dailyTokens: 500000, timeZone: Europe/Amsterdam }</c>.</summary>

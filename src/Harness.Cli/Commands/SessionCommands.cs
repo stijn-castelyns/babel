@@ -91,6 +91,21 @@ internal static class SessionCommands
         }));
         sessions.Subcommands.Add(reindex);
 
+        Option<bool> dryRun = new("--dry-run") { Description = "List what would be removed without removing it" };
+        Command prune = new("prune", "Apply the retention policies now: old sessions, run folders and trigger events.") { dryRun };
+        prune.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            PruneReportDto r = await c.PruneAsync(p.GetValue(dryRun), ct);
+            if (p.GetValue(CliContext.Json)) { Output.Json(r); return 0; }
+            string verb = r.DryRun ? "would remove" : "removed";
+            foreach (string s in r.Sessions) Console.WriteLine($"session {s}");
+            foreach (string run in r.RunFolders) Console.WriteLine($"run folder {run}");
+            Console.WriteLine($"{verb} {r.Sessions.Count} session(s), {r.RunFolders.Count} run folder(s){(r.DryRun ? "" : $" and {r.Events} trigger event(s)")}");
+            return 0;
+        }));
+        sessions.Subcommands.Add(prune);
+
         Argument<string[]> words = new("text") { Arity = ArgumentArity.OneOrMore };
         Command search = new("search", "Search session titles and messages.") { words };
         search.SetAction((p, ct) => HarnessCli.Guard(async () =>

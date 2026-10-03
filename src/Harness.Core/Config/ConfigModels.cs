@@ -12,6 +12,35 @@ public sealed class HarnessConfig
     /// <summary>Per-plugin settings, keyed by plugin id.</summary>
     public Dictionary<string, object?> Plugins { get; set; } = [];
     public RunLimitsConfig Runs { get; set; } = new();
+    public RetentionConfig Retention { get; set; } = new();
+}
+
+/// <summary>
+/// <c>retention:</c> in <c>config.yaml</c>: how long finished work is kept. Ages are durations (<c>30d</c>) or <c>never</c>.
+/// A trigger's own <c>retention:</c> overrides <see cref="Sessions"/> and <see cref="Runs"/> for its runs.
+/// </summary>
+public sealed class RetentionConfig
+{
+    /// <summary>Sessions a trigger started, deleted this long after their last activity.</summary>
+    public string Sessions { get; set; } = "never";
+    /// <summary>Sessions started by a person (no trigger).</summary>
+    public string InteractiveSessions { get; set; } = "never";
+    /// <summary>Run folders (<c>runs/&lt;run-id&gt;/</c>: workspace and output files), deleted this long after the run finished.</summary>
+    public string Runs { get; set; } = "never";
+    /// <summary>Handled trigger events, which de-duplicate retried deliveries and feed rate limits.</summary>
+    public string Events { get; set; } = "30d";
+    /// <summary>How often the daemon sweeps.</summary>
+    public string Interval { get; set; } = "1h";
+
+    /// <summary>Parses an age; <c>never</c> (or empty) is null.</summary>
+    public static TimeSpan? Age(string? text, string field)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Trim() == "never") return null;
+        TimeSpan age;
+        try { age = Durations.Parse(text); }
+        catch (Exception ex) when (ex is FormatException or OverflowException) { throw new ConfigException($"{field}: '{text}' is not a duration such as 30d, or never."); }
+        return age > TimeSpan.Zero ? age : throw new ConfigException($"{field} must be positive.");
+    }
 }
 
 public sealed class ModelProfile

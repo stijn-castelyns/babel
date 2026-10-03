@@ -9,6 +9,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton<TriggerQueue>();
         services.AddSingleton<TriggerEngine>();
+        services.AddSingleton<Retention>();
         services.AddSingleton<Harness.Sdk.IOutputSink, ReplySink>();
         services.AddSingleton<Harness.Sdk.IOutputSink, RunTriggerSink>();
         return services;

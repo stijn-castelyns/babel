@@ -92,6 +92,12 @@ internal static class ApiEndpoints
 
         api.MapPost("/sessions/reindex", (SessionStore sessions) => Results.Ok(sessions.Reindex()));
 
+        api.MapPost("/retention/sweep", async (PruneRequest body, Retention retention, CancellationToken ct) =>
+        {
+            RetentionReport r = await retention.SweepAsync(body.DryRun, ct);
+            return new PruneReportDto(r.Sessions, r.RunFolders, r.Events, r.DryRun);
+        });
+
         // ---- runs ----
 
         api.MapGet("/runs", (string? state, DateTimeOffset? since, string? session, int? limit, SessionStore sessions) =>

@@ -147,6 +147,19 @@ public sealed class HarnessDb
         return rows;
     }
 
+    /// <summary>Sessions whose last activity is before <paramref name="before"/>, oldest first.</summary>
+    public IReadOnlyList<(string Id, string? TriggerId, DateTimeOffset UpdatedAt)> SessionsIdleSince(DateTimeOffset before)
+    {
+        using SqliteConnection c = Open();
+        using SqliteCommand cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT id, trigger_id, updated_at FROM sessions WHERE updated_at < $before ORDER BY updated_at";
+        cmd.Parameters.AddWithValue("$before", before.ToUniversalTime().ToString("O"));
+        List<(string, string?, DateTimeOffset)> rows = [];
+        using SqliteDataReader r = cmd.ExecuteReader();
+        while (r.Read()) rows.Add((r.GetString(0), Str(r, 1), Date(r, 2)!.Value));
+        return rows;
+    }
+
     public void IndexMessages(string sessionId, IEnumerable<HistoryEntry> entries)
     {
         using SqliteConnection c = Open();
@@ -211,6 +224,22 @@ public sealed class HarnessDb
         cmd.Parameters.AddWithValue("$output", (object?)r.Output ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$files", r.Files.Count > 0 ? System.Text.Json.JsonSerializer.Serialize(r.Files) : DBNull.Value);
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Removes the run records of a deleted session and returns their ids.</summary>
+    public IReadOnlyList<string> DeleteRunsOfSession(string sessionId)
+    {
+        using SqliteConnection c = Open();
+        List<string> ids = [];
+        using (SqliteCommand select = c.CreateCommand())
+        {
+            select.CommandText = "SELECT id FROM runs WHERE session_id = $p";
+            select.Parameters.AddWithValue("$p", sessionId);
+            using SqliteDataReader r = select.ExecuteReader();
+            while (r.Read()) ids.Add(r.GetString(0));
+        }
+        Exec(c, "DELETE FROM runs WHERE session_id = $p", sessionId);
+        return ids;
     }
 
     public RunRecord? GetRun(string id) => QueryRuns("WHERE id = $id", cmd => cmd.Parameters.AddWithValue("$id", id), 1).FirstOrDefault();

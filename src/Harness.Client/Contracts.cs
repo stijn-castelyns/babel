@@ -51,3 +51,7 @@ public sealed record StatusDto(string Version, string Home, int ActiveRuns, int 
 public sealed record EventDto(long Seq, DateTimeOffset Ts, string? RunId, string? SessionId, string Type, JsonObject Data);
 
 public sealed record ErrorDto(string Error);
+
+public sealed record PruneRequest(bool DryRun = false);
+
+public sealed record PruneReportDto(IReadOnlyList<string> Sessions, IReadOnlyList<string> RunFolders, int Events, bool DryRun);

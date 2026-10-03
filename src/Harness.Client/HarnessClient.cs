@@ -94,6 +94,8 @@ public sealed class HarnessClient : IDisposable
 
     public Task<int> ReindexAsync(CancellationToken ct = default) => PostAsync<int>("api/sessions/reindex", new { }, ct);
 
+    public Task<PruneReportDto> PruneAsync(bool dryRun, CancellationToken ct = default) => PostAsync<PruneReportDto>("api/retention/sweep", new PruneRequest(dryRun), ct);
+
     // ---- runs ----
 
     public Task<IReadOnlyList<RunDto>> RunsAsync(string? state = null, DateTimeOffset? since = null, string? sessionId = null, int limit = 100, CancellationToken ct = default)

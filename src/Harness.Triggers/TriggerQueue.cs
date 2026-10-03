@@ -80,6 +80,16 @@ public sealed class TriggerQueue(HarnessDb db)
         return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Forgets handled events received before <paramref name="before"/>; pending and queued events are kept.</summary>
+    public int DeleteHandledBefore(DateTimeOffset before)
+    {
+        using SqliteConnection c = db.Open();
+        using SqliteCommand cmd = c.CreateCommand();
+        cmd.CommandText = "DELETE FROM trigger_events WHERE received_at < $before AND status NOT IN ('pending', 'queued')";
+        cmd.Parameters.AddWithValue("$before", before.ToUniversalTime().ToString("O"));
+        return cmd.ExecuteNonQuery();
+    }
+
     /// <summary>How many runs deep the chain that started <paramref name="runId"/> is (0 for a run no other run started).</summary>
     public int ChainDepth(string runId)
     {

@@ -6,8 +6,7 @@ This is the `harness`: a self-hosted .NET 10 coding agent harness built on Micro
   original; three embedded diagrams did not survive the export and appear as `[embedded content: …]` placeholders).
 - **Where things stand:** `docs/STATUS.md` lists what is built, every deliberate deviation from the design and why, and
   what is not built yet. Keep it current: update it in the same commit as the work.
-- **Next up:** the rest of phase 4:
-  retention policies and compaction checkpoints; then the egress proxy for `network: allowlist`.
+- **Next up:** the rest of phase 4: compaction checkpoints; then the egress proxy for `network: allowlist`.
 
 ## Build and test
 

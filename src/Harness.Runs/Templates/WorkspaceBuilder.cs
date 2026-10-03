@@ -124,13 +124,18 @@ public sealed class WorkspaceBuilder
             _ => finalState == RunStates.Succeeded,
         };
         string workspace = WorkspaceFor(runId);
-        if (!remove || !Directory.Exists(workspace)) return;
-        foreach (string file in Directory.EnumerateFileSystemEntries(workspace, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }))
+        if (remove && Directory.Exists(workspace)) DeleteTree(workspace);
+    }
+
+    /// <summary>Deletes a folder tree, read-only files included.</summary>
+    public static void DeleteTree(string dir)
+    {
+        foreach (string file in Directory.EnumerateFileSystemEntries(dir, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }))
         {
             // Git marks pack files read-only, which makes Directory.Delete fail on some platforms.
             try { File.SetAttributes(file, FileAttributes.Normal); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
-        Directory.Delete(workspace, recursive: true);
+        Directory.Delete(dir, recursive: true);
     }
 
     private static string? Join(List<string> log)

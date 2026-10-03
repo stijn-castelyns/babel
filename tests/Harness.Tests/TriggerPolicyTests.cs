@@ -4,6 +4,7 @@ using Harness.Extensions.Plugins;
 using Harness.Runs;
 using Harness.Sdk;
 using Harness.Tests.TestSupport;
+using Harness.Triggers;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -263,5 +264,63 @@ public class TriggerPolicyTests
         public async Task SendAsync(string sender, string text) =>
             await _context!.EmitAsync(new TriggerEvent(Guid.NewGuid().ToString("N"), _context.TriggerId, DateTimeOffset.UtcNow, sender, text, [],
                 new JsonObject(), null), CancellationToken.None);
+    }
+}
+
+public class RetentionTests
+{
+    [Fact]
+    public async Task Sweep_removes_old_sessions_and_run_folders_by_trigger_policy()
+    {
+        await using TestHome home = new();
+        File.AppendAllText(home.Paths.ConfigFile, "\nretention: { runs: 1d, events: 7d }\n");
+        home.WriteTemplate("t", ("template.yaml", "sandbox: none\nworkspace: { keep: always }\noutput: { kind: text }\n"), ("files/readme.txt", "hi"));
+        File.WriteAllText(Path.Combine(home.Paths.TriggersDir, "short.yaml"), "template: t\nallowUnsandboxed: true\nretention: { sessions: 10d }\n");
+        File.WriteAllText(Path.Combine(home.Paths.TriggersDir, "long.yaml"), "template: t\nallowUnsandboxed: true\n");
+        home.Build(new ScriptedChatClient((messages, _) => messages.Any(m => m.Role == ChatRole.Tool)
+            ? ScriptedChatClient.Text("done") : ScriptedChatClient.Call("submit_output", new() { ["text"] = "ok" })));
+        await home.Triggers.StartAsync(CancellationToken.None);
+        RunOrchestrator runs = home.Orchestrator;
+
+        RunRecord shortRun = await home.Triggers.FireAsync("short", "go", null, CancellationToken.None);
+        RunRecord longRun = await home.Triggers.FireAsync("long", "go", null, CancellationToken.None);
+        RunRecord recent = await home.Triggers.FireAsync("long", "go", null, CancellationToken.None);
+        foreach (RunRecord r in new[] { shortRun, longRun, recent }) await runs.WaitAsync(r.Id).WaitAsync(TimeSpan.FromSeconds(30));
+        string RunDir(RunRecord r) => Path.Combine(home.Paths.RunsDir, r.Id);
+        Assert.True(Directory.Exists(RunDir(shortRun)) && Directory.Exists(RunDir(longRun)));
+
+        // Everything but the last run happened three weeks ago.
+        string old = DateTimeOffset.UtcNow.AddDays(-21).ToString("O");
+        using (Microsoft.Data.Sqlite.SqliteConnection c = runs.Sessions.Index.Open())
+        using (Microsoft.Data.Sqlite.SqliteCommand cmd = c.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE sessions SET updated_at = $old WHERE id IN ($a, $b);
+                UPDATE runs SET finished_at = $old WHERE id IN ($ra, $rb);
+                UPDATE trigger_events SET received_at = $old;
+                """;
+            cmd.Parameters.AddWithValue("$old", old);
+            cmd.Parameters.AddWithValue("$a", shortRun.SessionId);
+            cmd.Parameters.AddWithValue("$b", longRun.SessionId);
+            cmd.Parameters.AddWithValue("$ra", shortRun.Id);
+            cmd.Parameters.AddWithValue("$rb", longRun.Id);
+            cmd.ExecuteNonQuery();
+        }
+
+        Retention retention = home.Services!.GetRequiredService<Retention>();
+        RetentionReport dry = await retention.SweepAsync(dryRun: true, CancellationToken.None);
+        Assert.Equal([shortRun.SessionId], dry.Sessions);
+        Assert.Equal(new[] { longRun.Id, shortRun.Id }.Order(), dry.RunFolders.Order());
+        Assert.True(Directory.Exists(RunDir(shortRun)));
+
+        RetentionReport report = await retention.SweepAsync(dryRun: false, CancellationToken.None);
+        Assert.Equal([shortRun.SessionId], report.Sessions);
+        Assert.Equal(3, report.Events);
+        Assert.Null(runs.Sessions.TryOpen(shortRun.SessionId));
+        Assert.Null(runs.Sessions.Index.GetRun(shortRun.Id));
+        Assert.False(Directory.Exists(RunDir(shortRun)));
+        Assert.NotNull(runs.Sessions.TryOpen(longRun.SessionId));   // retention.sessions defaults to never
+        Assert.False(Directory.Exists(RunDir(longRun)));             // but its run folder is older than retention.runs
+        Assert.True(Directory.Exists(RunDir(recent)));
     }
 }
