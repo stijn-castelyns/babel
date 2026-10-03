@@ -39,8 +39,11 @@ internal static class ApiEndpoints
 
         // ---- sessions ----
 
-        api.MapPost("/sessions", (CreateSessionRequest body, RunOrchestrator runs) =>
+        api.MapPost("/sessions", (CreateSessionRequest body, RunOrchestrator runs, HttpContext http) =>
         {
+            // A raw path is only meaningful (and only safe) for a client on the same machine; remote clients use named workspaces.
+            if (body.Workspace is not null && body.WorkspaceName is null && !Listener.IsLocalSocket(http))
+                return Results.BadRequest(new ErrorDto("Remote clients must use a named workspace (workspaceName)."));
             SessionFolder session = runs.CreateSession(new SessionRequest
             {
                 Agent = body.Agent, Workspace = body.Workspace, WorkspaceName = body.WorkspaceName,
