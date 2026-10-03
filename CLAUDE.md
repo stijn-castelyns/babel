@@ -19,7 +19,8 @@ The build treats warnings as errors and uses central package versions (`Director
 
 In a fresh cloud container the .NET SDK is not preinstalled and `dot.net` downloads are blocked; install from Ubuntu:
 `apt-get install -y dotnet-sdk-10.0 bubblewrap` (ripgrep is usually present). Bubblewrap tests skip themselves when
-`bwrap` is missing.
+`bwrap` is missing. The container tests need a Docker daemon (`dockerd &` works in the cloud container) and
+`docker pull bash:5.2`; without them they skip.
 
 For an end-to-end check without a real model, point a model profile at any OpenAI-compatible endpoint
 (`provider: openai`, `endpoint: http://127.0.0.1:<port>/v1`); a tiny scripted chat-completions server that returns tool

@@ -56,6 +56,16 @@ answer 403 with the reason and become `EGRESS_DENIED` run events. When the daemo
 through it. Setup steps, skill scripts and stdio MCP servers go through the same path. The forwarder needs only the binary
 for a single-file publish; under `dotnet harness.dll` the app folder and the .NET install are mounted read-only too.
 
+**Container egress**: a `container` profile with `network: allowlist` gets its own `--internal` Docker network (no route out)
+and a fixed address on it (the gateway's next address). The daemon runs the same egress proxy on a TCP socket bound to
+that network's gateway, accepting connections only from the container's address, so other containers and local
+processes that can reach the gateway get nothing. `HTTP(S)_PROXY`/`ALL_PROXY` point at it from the container's
+environment; nothing has to run inside the image. The network is removed with the container. Rootless Podman keeps
+container networks out of the host's reach, so there the sandbox fails to start with that explanation (fail closed).
+Verified with Docker: `sandbox test` passes on a `bash:5.2` profile (direct route closed, allowlisted hosts tunnelled,
+others 403, memory/pids/cpu limits read back, cgroup v1 or v2), and a test runs a container when Docker and the image
+are present. A container's writable `/usr` is reported as the container's own copy rather than a failure.
+
 `harness sandbox test <profile>` (`POST /api/sandboxes/{name}/test`, run by the daemon so it sees the daemon's environment)
 starts the profile on a scratch workspace and checks from the inside: commands run, the workspace is read-write and visible
 on the host, `/usr` is read-only, the harness home is invisible, each mount exists with its mode, the network matches the
@@ -304,8 +314,7 @@ Built in this order, each step usable on its own; the API listener keeps working
 | `run:` steps run `setup.sh` from the workspace | A `./name` missing from the workspace runs from the template folder, mounted read-only | Setup scripts work without copying them into the agent's workspace. |
 | `git` steps | Run on the host, not in the sandbox | Clones need network and credentials the sandbox (often `network: none`) does not have; no repository code runs during a clone. |
 | The sandbox reaches the egress proxy through a bound Unix socket | A forwarder inside the sandbox (the harness binary) bridges `127.0.0.1:3128` to that socket and runs the command as its child | Tools only take TCP proxies from `HTTP(S)_PROXY`, and an unshared network namespace has nothing but loopback; something inside has to listen on it. This costs one .NET start-up per sandboxed command in allowlisted profiles. |
-| Containers reach the proxy over an internal network | `network: allowlist` in a `container` profile still means no network | The forwarder would need the harness (and for `dotnet harness.dll`, the .NET runtime) to run inside arbitrary images, and no container runtime was available to verify it; it fails closed, and `sandbox test` says so. |
-| `bubblewrap` limits | `cpus`, `memoryMb` and `pids` are not enforced by bubblewrap (only the wall clock is) | bwrap has no cgroup support; `sandbox test` warns. Use a container profile for hard limits. |
+| `bubblewrap` limits | `cpus`, `memoryMb` and `pids` are not enforced by bubblewrap (only the wall clock is) | bwrap has no cgroup support; `sandbox test` warns. Use a container profile for hard limits. The sound fix is running bwrap under `systemd-run --user --scope -p MemoryMax=… -p TasksMax=… -p CPUQuota=…`, not built because no systemd user manager was available to verify it; rlimits are no substitute (an address-space cap breaks .NET and JVM processes). |
 | Processes started from any thread | All child processes start from one dedicated thread (`ProcessSpawner`) | `bwrap --die-with-parent` uses `PR_SET_PDEATHSIG`, which fires when the forking *thread* exits; retiring thread-pool threads would kill sandboxed commands. |
 | Parked runs keep their whole `RunRequest` | Everything except `ExtraTools` and the concurrency `Gate` is kept | `submit_output` is rebuilt from the run template on resume; `ExtraTools` is only for programmatic callers. A run resumed after a restart does not count against its trigger's `concurrency:` limits; slots are in-memory. |
 | Delivery failures | A failed sink turns `succeeded` into `failed` | The design leaves it open; valid output that never reached its destination is not a success, and the output stays in `runs/<run-id>/output`. |
@@ -320,7 +329,6 @@ Built in this order, each step usable on its own; the API listener keeps working
 
 ## Not built yet
 
-- The egress proxy for `container` sandboxes.
 - **Phase 5 leftovers:** managing `operator` and `viewer` users (only the owner is created today; roles and their scopes
   are enforced), and Identity migrations once the schema changes.
 - **Phase 6:** Signal, WhatsApp and Messenger sources with in-chat approvals.

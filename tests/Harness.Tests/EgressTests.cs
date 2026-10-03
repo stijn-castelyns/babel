@@ -97,6 +97,72 @@ public sealed class EgressTests : IDisposable
     }
 
     [Fact]
+    public async Task A_tcp_proxy_answers_only_its_container()
+    {
+        if (!OperatingSystem.IsLinux()) return;   // 127.0.0.2 is a loopback address on Linux only
+        (int port, Task server) = Serve("hello from host");
+        await using EgressProxy proxy = EgressProxy.StartTcp(IPAddress.Loopback, IPAddress.Parse("127.0.0.2"), [$"localhost:{port}"], useEnvironmentProxy: false);
+        string request = $"GET http://localhost:{port}/ HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+        async Task<string> From(string source)
+        {
+            using Socket s = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            s.Bind(new IPEndPoint(IPAddress.Parse(source), 0));
+            await s.ConnectAsync(proxy.Endpoint!);
+            await using NetworkStream stream = new(s);
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(request));
+            using StreamReader reader = new(stream);
+            try { return await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (IOException) { return ""; }
+        }
+
+        Assert.EndsWith("hello from host", await From("127.0.0.2"));
+        Assert.Equal("", await From("127.0.0.1"));   // anyone else is hung up on
+    }
+
+    [Fact]
+    public async Task Allowlisted_container_reaches_allowed_hosts_only_through_the_proxy()
+    {
+        // Needs a running Docker daemon and the bash image already pulled; skipped otherwise, like the bubblewrap tests.
+        if (!OperatingSystem.IsLinux() || BubblewrapSandboxProvider.FindOnPath("docker") is null) return;
+        using (System.Diagnostics.Process? check = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("docker", ["image", "inspect", "bash:5.2"])
+            { RedirectStandardOutput = true, RedirectStandardError = true }))
+        {
+            if (check is null) return;
+            await check.WaitForExitAsync();
+            if (check.ExitCode != 0) return;
+        }
+        (int port, Task server) = Serve("hello from host");
+        ConcurrentQueue<EgressAttempt> log = new();
+        SandboxSpec spec = new()
+        {
+            Name = "t", Type = "container", Image = "bash:5.2", WorkspaceHostPath = _ws, WorkspaceSandboxPath = "/workspace",
+            Network = NetworkMode.Allowlist, AllowHosts = [$"localhost:{port}"], OnEgress = log.Enqueue,
+            Options = new Dictionary<string, string> { ["runtime"] = "docker" },
+        };
+        string network;
+        await using (ISandbox sandbox = await new ContainerSandboxProvider().CreateAsync(spec, default))
+        {
+            network = sandbox.Id + "-egress";
+            string Get(string target) => "p=${HTTPS_PROXY#http://}; exec 3<>/dev/tcp/${p%:*}/${p##*:} && " +
+                $"printf 'GET {target} HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n' >&3 && cat <&3";
+            ExecResult allowed = await sandbox.ExecAsync(new ExecRequest { Command = Get($"http://localhost:{port}/") }, default);
+            Assert.True(allowed.ExitCode == 0, allowed.Output);
+            Assert.Contains("hello from host", allowed.Output);
+            ExecResult denied = await sandbox.ExecAsync(new ExecRequest { Command = Get("http://example.com/") }, default);
+            Assert.Contains("403 Forbidden", denied.Output);
+            // The internal network has no route out: a direct connection fails.
+            ExecResult direct = await sandbox.ExecAsync(new ExecRequest { Command = "(timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/53') 2>/dev/null && echo reached || echo blocked" }, default);
+            Assert.Equal("blocked", direct.Output.Trim());
+        }
+        Assert.Contains(log, e => e.Host == "example.com" && !e.Allowed);
+        using System.Diagnostics.Process gone = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("docker", ["network", "inspect", network])
+            { RedirectStandardOutput = true, RedirectStandardError = true })!;
+        await gone.WaitForExitAsync();
+        Assert.NotEqual(0, gone.ExitCode);   // the sandbox's network went with it
+    }
+
+    [Fact]
     public void No_proxy_rules_bypass_the_upstream_proxy()
     {
         string? before = Environment.GetEnvironmentVariable("HTTPS_PROXY"), noBefore = Environment.GetEnvironmentVariable("NO_PROXY");

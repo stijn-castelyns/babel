@@ -41,8 +41,12 @@ public sealed class SandboxProbe(SandboxFactory factory)
             Add("workspace is read-write", write.ExitCode == 0 && seen, $"{inside} → {workspace}");
 
             ExecResult system = await Sh("touch /usr/.harness-probe 2>/dev/null && echo writable || echo read-only");
-            Add("system directories are read-only", system.Output.Trim() == "read-only",
-                system.Output.Trim() == "read-only" ? "/usr cannot be written" : isolated ? "/usr is writable" : "host execution: nothing is isolated", warnOnly: !isolated);
+            if (spec.Type == "container" && system.Output.Trim() == "writable")
+                // The image's file system is the container's own copy: writes never reach the host and go with the container.
+                results.Add(new ProbeResult("system directories are the container's", "pass", "/usr is writable in the container's copy of the image only"));
+            else
+                Add("system directories are read-only", system.Output.Trim() == "read-only",
+                    system.Output.Trim() == "read-only" ? "/usr cannot be written" : isolated ? "/usr is writable" : "host execution: nothing is isolated", warnOnly: !isolated);
 
             ExecResult home = await Sh($"test -e '{harnessHome}' && echo visible || echo hidden");
             Add("harness home is hidden", home.Output.Trim() == "hidden",
@@ -86,9 +90,13 @@ public sealed class SandboxProbe(SandboxFactory factory)
     private static string Tcp(string host, int port) =>
         $"(timeout 5 bash -c 'exec 3<>/dev/tcp/{host}/{port}') 2>/dev/null && echo open || echo closed";
 
-    /// <summary>Bash that asks the in-sandbox proxy for a tunnel and prints the status line.</summary>
+    /// <summary>
+    /// Bash that asks the sandbox's proxy (wherever <c>HTTPS_PROXY</c> points: the in-sandbox forwarder for bubblewrap, the
+    /// network gateway for containers) for a tunnel and prints the status line.
+    /// </summary>
     private static string Connect(string host, int port) =>
-        $"timeout 20 bash -c 'exec 3<>/dev/tcp/127.0.0.1/{EgressForwarder.Port} && printf \"CONNECT {host}:{port} HTTP/1.1\\r\\nHost: {host}:{port}\\r\\n\\r\\n\" >&3 && head -n 1 <&3' 2>&1 | tr -d '\\r'";
+        "p=${HTTPS_PROXY#http://}; p=${p%/}; " +
+        $"timeout 20 bash -c 'exec 3<>/dev/tcp/'\"${{p%:*}}/${{p##*:}}\"' && printf \"CONNECT {host}:{port} HTTP/1.1\\r\\nHost: {host}:{port}\\r\\n\\r\\n\" >&3 && head -n 1 <&3' 2>&1 | tr -d '\\r'";
 
     private static async Task<IEnumerable<ProbeResult>> NetworkAsync(SandboxSpec spec, Func<string, Task<ExecResult>> sh, ConcurrentQueue<EgressAttempt> egress)
     {
@@ -105,9 +113,9 @@ public sealed class SandboxProbe(SandboxFactory factory)
                 break;
             case NetworkMode.Allowlist:
                 results.Add(new ProbeResult("allowlist: no direct route", direct == "closed" ? "pass" : "fail", direct == "closed" ? "only the egress proxy is reachable" : "a direct connection to 1.1.1.1:53 succeeded"));
-                if (spec.Type != "bubblewrap")
+                if (spec.Type is not ("bubblewrap" or "container"))
                 {
-                    results.Add(new ProbeResult("allowlist: egress proxy", "warn", $"the {spec.Type} provider has no egress proxy yet; allowlist means no network"));
+                    results.Add(new ProbeResult("allowlist: egress proxy", "warn", $"the {spec.Type} provider has no egress proxy; allowlist means no network"));
                     break;
                 }
                 foreach (string host in spec.AllowHosts.Where(h => !h.StartsWith("*.", StringComparison.Ordinal)).Take(3))
@@ -139,7 +147,11 @@ public sealed class SandboxProbe(SandboxFactory factory)
             results.Add(new ProbeResult("limits: cpus, memory, pids", "warn", $"the {spec.Type} provider does not enforce them; use a container profile"));
             return results;
         }
-        string output = (await sh("cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max /sys/fs/cgroup/cpu.max 2>/dev/null")).Output;
+        // cgroup v2 files, else the v1 equivalents (memory limit in bytes, pids.max, cfs quota and period).
+        string output = (await sh(
+            "if [ -f /sys/fs/cgroup/memory.max ]; then cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max /sys/fs/cgroup/cpu.max; " +
+            "else cat /sys/fs/cgroup/memory/memory.limit_in_bytes /sys/fs/cgroup/pids/pids.max; " +
+            "echo \"$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || cat /sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us) $(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us 2>/dev/null || cat /sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us)\"; fi 2>/dev/null")).Output;
         string[] values = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         string Value(int i) => i < values.Length ? values[i] : "";
         if (l.MemoryMb is int mb)

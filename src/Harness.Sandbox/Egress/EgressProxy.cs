@@ -56,24 +56,45 @@ public sealed class EgressProxy : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _accepting;
 
-    private EgressProxy(string socketPath, EgressAllowlist allowlist, Action<EgressAttempt>? log, UpstreamProxy? upstream)
+    private readonly IPAddress? _onlyPeer;
+
+    private EgressProxy(Socket listener, string? socketPath, IPAddress? onlyPeer, EgressAllowlist allowlist, Action<EgressAttempt>? log, UpstreamProxy? upstream)
     {
+        _listener = listener;
         SocketPath = socketPath;
+        _onlyPeer = onlyPeer;
         _allowlist = allowlist;
         _log = log;
         _upstream = upstream;
-        if (File.Exists(socketPath)) File.Delete(socketPath);
-        _listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        _listener.Bind(new UnixDomainSocketEndPoint(socketPath));
         _listener.Listen(64);
         _accepting = Task.Run(AcceptLoopAsync);
     }
 
-    public string SocketPath { get; }
+    /// <summary>The Unix socket a bubblewrap sandbox reaches the proxy on, when it listens on one.</summary>
+    public string? SocketPath { get; }
+
+    /// <summary>The TCP address a container reaches the proxy on, when it listens on one.</summary>
+    public IPEndPoint? Endpoint => _listener.LocalEndPoint as IPEndPoint;
 
     /// <summary>Starts a proxy listening on <paramref name="socketPath"/>.</summary>
-    public static EgressProxy Start(string socketPath, IEnumerable<string> allowHosts, Action<EgressAttempt>? log = null, bool useEnvironmentProxy = true) =>
-        new(socketPath, new EgressAllowlist(allowHosts), log, useEnvironmentProxy ? UpstreamProxy.FromEnvironment() : null);
+    public static EgressProxy Start(string socketPath, IEnumerable<string> allowHosts, Action<EgressAttempt>? log = null, bool useEnvironmentProxy = true)
+    {
+        if (File.Exists(socketPath)) File.Delete(socketPath);
+        Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        listener.Bind(new UnixDomainSocketEndPoint(socketPath));
+        return new(listener, socketPath, null, new EgressAllowlist(allowHosts), log, useEnvironmentProxy ? UpstreamProxy.FromEnvironment() : null);
+    }
+
+    /// <summary>
+    /// Starts a proxy on a TCP address (a container network's gateway), answering only connections from
+    /// <paramref name="onlyPeer"/>, so other containers or local processes that can reach the address get nothing.
+    /// </summary>
+    public static EgressProxy StartTcp(IPAddress bind, IPAddress onlyPeer, IEnumerable<string> allowHosts, Action<EgressAttempt>? log = null, bool useEnvironmentProxy = true)
+    {
+        Socket listener = new(bind.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+        listener.Bind(new IPEndPoint(bind, 0));
+        return new(listener, null, onlyPeer, new EgressAllowlist(allowHosts), log, useEnvironmentProxy ? UpstreamProxy.FromEnvironment() : null);
+    }
 
     private async Task AcceptLoopAsync()
     {
@@ -83,6 +104,11 @@ public sealed class EgressProxy : IAsyncDisposable
             try { client = await _listener.AcceptAsync(_stop.Token); }
             catch (Exception) when (_stop.IsCancellationRequested) { return; }
             catch (SocketException) { continue; }
+            if (_onlyPeer is not null && (client.RemoteEndPoint as IPEndPoint)?.Address.Equals(_onlyPeer) != true)
+            {
+                client.Dispose();
+                continue;
+            }
             _ = Task.Run(() => HandleAsync(client));
         }
     }
@@ -254,7 +280,7 @@ public sealed class EgressProxy : IAsyncDisposable
         _stop.Cancel();
         _listener.Dispose();
         try { await _accepting; } catch (Exception) { /* stopping */ }
-        try { File.Delete(SocketPath); } catch (IOException) { }
+        if (SocketPath is not null) try { File.Delete(SocketPath); } catch (IOException) { }
         _stop.Dispose();
     }
 }
