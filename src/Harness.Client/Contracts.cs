@@ -40,7 +40,8 @@ public sealed record WorkspaceDto(string Name, string Path);
 
 public sealed record TemplateDto(string Name, string? Description, string? Agent, string? Sandbox, string OutputKind, IReadOnlyList<string> Steps, string Keep);
 
-public sealed record TriggerDto(string Id, string SourceType, bool Enabled, DateTimeOffset? NextFireAt, string? LastRunId, string? LastState);
+public sealed record TriggerDto(string Id, string SourceType, bool Enabled, DateTimeOffset? NextFireAt, string? LastRunId, string? LastState,
+    long? DailyTokens = null, long? TokensToday = null);
 
 public sealed record FireTriggerRequest(string? Text = null, JsonObject? Inputs = null);
 

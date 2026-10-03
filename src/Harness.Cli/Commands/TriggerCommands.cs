@@ -16,9 +16,10 @@ internal static class TriggerCommands
             using HarnessClient c = CliContext.Connect(p);
             IReadOnlyList<TriggerDto> rows = await c.TriggersAsync(ct);
             if (p.GetValue(CliContext.Json)) { Output.Json(rows); return 0; }
-            Output.Table(p, ["TRIGGER", "SOURCE", "ENABLED", "NEXT", "LAST RUN", "LAST STATE"], rows.Select(t => new[]
+            Output.Table(p, ["TRIGGER", "SOURCE", "ENABLED", "NEXT", "LAST RUN", "LAST STATE", "BUDGET TODAY"], rows.Select(t => new[]
             {
                 t.Id, t.SourceType, t.Enabled ? "yes" : "no", t.NextFireAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-", t.LastRunId ?? "-", t.LastState ?? "-",
+                t.DailyTokens is long budget ? $"{t.TokensToday ?? 0:N0} / {budget:N0}" : "-",
             }));
             return 0;
         }));

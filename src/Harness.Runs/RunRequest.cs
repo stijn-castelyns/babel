@@ -39,6 +39,11 @@ public sealed record RunRequest
     /// <c>concurrency:</c> limits). The run stays <c>queued</c> until it gets one. Not kept across a restart.
     /// </summary>
     public IRunGate? Gate { get; init; }
+    /// <summary>
+    /// How many tokens the run may still use when it starts (a trigger's daily budget minus what its other runs used today),
+    /// with the message for when it runs out. Applied on top of the agent's and template's <c>maxTokens</c>.
+    /// </summary>
+    public Func<string, (long Allowance, string Reason)?>? TokenAllowance { get; init; }
     /// <summary>Extra tools for this run only, such as <c>submit_output</c>. They are not kept across a restart.</summary>
     public IReadOnlyList<AITool> ExtraTools { get; init; } = [];
 }

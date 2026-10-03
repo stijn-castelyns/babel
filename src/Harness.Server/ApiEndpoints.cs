@@ -120,7 +120,8 @@ internal static class ApiEndpoints
         api.MapGet("/triggers", (TriggerEngine triggers, RunOrchestrator runs) => triggers.Definitions.OrderBy(d => d.Id).Select(d =>
         {
             (DateTimeOffset? _, string? lastRun) = triggers.LastFire(d.Id);
-            return new TriggerDto(d.Id, d.SourceType, triggers.IsEnabled(d), triggers.NextFire(d), lastRun, lastRun is null ? null : runs.Get(lastRun)?.State);
+            return new TriggerDto(d.Id, d.SourceType, triggers.IsEnabled(d), triggers.NextFire(d), lastRun, lastRun is null ? null : runs.Get(lastRun)?.State,
+                d.Budget.DailyTokens, d.Budget.DailyTokens is null ? null : triggers.TokensUsedToday(d, null));
         }));
 
         api.MapPost("/triggers/{id}/fire", async (string id, FireTriggerRequest? body, TriggerEngine triggers, CancellationToken ct) =>

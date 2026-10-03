@@ -134,6 +134,9 @@ public sealed class AgentLimits
     public int MaxToolIterations { get; set; } = 60;
     public int MaxRunMinutes { get; set; } = 30;
     public long? MaxTokens { get; set; }
+    /// <summary>What set <see cref="MaxTokens"/> when it is not the agent's own limit (a trigger's daily budget), for the error message.</summary>
+    [YamlDotNet.Serialization.YamlIgnore]
+    public string? MaxTokensReason { get; set; }
 }
 
 /// <summary>An entry in <c>sandboxes.yaml</c>.</summary>

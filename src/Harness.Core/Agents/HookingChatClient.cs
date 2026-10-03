@@ -41,7 +41,7 @@ public sealed class HookingChatClient(IChatClient inner, RunContext run, HookPip
     private async ValueTask<(List<ChatMessage>, ChatOptions)> BeforeAsync(IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken ct)
     {
         if (run.Agent.Limits.MaxTokens is long max && run.InputTokens + run.OutputTokens >= max)
-            throw new RunLimitExceededException($"Token limit of {max:N0} reached.");
+            throw new RunLimitExceededException(run.Agent.Limits.MaxTokensReason ?? $"Token limit of {max:N0} reached.");
 
         List<ChatMessage> list = [.. messages];
         ChatOptions opts = options?.Clone() ?? new ChatOptions();

@@ -73,7 +73,13 @@ and a manual fire answers with the reason. These sit on top of the daemon-wide `
 `rateLimit: { perSender: 10/1h }` (also `3/m`) counts a sender's events in a sliding window from the durable queue, which now
 records the sender: only events queued earlier that were let through count, so two messages arriving together cannot both
 push each other over. Events over the limit are dropped and logged with status `rate_limited` before any hook runs. Manual
-fires, chained runs and events without a sender are never limited. A trigger references a run template with `template:`; its
+fires, chained runs and events without a sender are never limited.
+
+`budget: { dailyTokens, timeZone }` caps the input plus output tokens of all a trigger's runs per calendar day (local time
+unless `timeZone:` is set), counted from the run index plus the live usage of active runs. Once it is spent, events are
+dropped with status `over_budget` and manual fires are refused with the reason. A run that starts while budget remains gets
+the rest as its token limit (the lower of that and the agent's or template's `maxTokens`), and fails with "Trigger 'x' used up
+its daily token budget" when it reaches it. `harness triggers ls` shows today's usage against the budget. A trigger references a run template with `template:`; its
 `agent:` and `prompt:` override the template's.
 
 **Run templates (phase 4)**: folders under `templates/` with a `template.yaml` (agent, sandbox, workspace steps, `keep`,
@@ -136,8 +142,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Phase 4:**
-  daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
+- **Phase 4:** retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.
 - **Phase 5:** ASP.NET Core Identity with passkeys and step-up, device-pairing login, scoped tokens, the PWA, Web Push.

@@ -229,6 +229,20 @@ public sealed class HarnessDb
         }, limit);
     }
 
+    /// <summary>Tokens (input + output) of each run a trigger created since <paramref name="since"/>, by run id.</summary>
+    public Dictionary<string, long> TriggerRunTokens(string triggerId, DateTimeOffset since)
+    {
+        using SqliteConnection c = Open();
+        using SqliteCommand cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT id, input_tokens + output_tokens FROM runs WHERE trigger_id = $t AND created_at >= $since";
+        cmd.Parameters.AddWithValue("$t", triggerId);
+        cmd.Parameters.AddWithValue("$since", since.ToUniversalTime().ToString("O"));
+        Dictionary<string, long> tokens = new(StringComparer.Ordinal);
+        using SqliteDataReader r = cmd.ExecuteReader();
+        while (r.Read()) tokens[r.GetString(0)] = r.GetInt64(1);
+        return tokens;
+    }
+
     /// <summary>
     /// Marks runs that were active when the daemon stopped as failed, except runs parked on an approval:
     /// those resume when the approval is answered.

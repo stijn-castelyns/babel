@@ -42,6 +42,7 @@ public sealed class TriggerDefinition
     public string? Coalesce { get; set; }
     public TriggerConcurrency Concurrency { get; set; } = new();
     public TriggerRateLimit RateLimit { get; set; } = new();
+    public TriggerBudget Budget { get; set; } = new();
 
     [YamlDotNet.Serialization.YamlIgnore]
     public string SourceType => Source["type"]?.GetValue<string>() ?? "manual";
@@ -83,6 +84,8 @@ public sealed class TriggerDefinition
         if (Coalesce is { } coalesce && Duration(coalesce, "coalesce") <= TimeSpan.Zero) throw new ConfigException("coalesce must be positive.");
         if (Approvals.Timeout is { } timeout) Duration(timeout, "approvals.timeout");
         if (Concurrency.Global is < 1 || Concurrency.PerSession is < 1) throw new ConfigException("concurrency limits must be at least 1.");
+        if (Budget.DailyTokens is < 1) throw new ConfigException("budget.dailyTokens must be positive.");
+        if (Budget.TimeZone is { } zone) _ = TriggerBudget.Zone(zone);
         if (RateLimit.PerSender is { } perSender) _ = TriggerRateLimit.Parse(perSender);
         if (Concurrency.OnBusy is not ("queue" or "drop")) throw new ConfigException($"concurrency.onBusy must be queue or drop, not '{Concurrency.OnBusy}'.");
     }
@@ -92,6 +95,33 @@ public sealed class TriggerFilter
 {
     /// <summary>Sender allowlist; when set, everything else is dropped and logged.</summary>
     public List<string> Senders { get; set; } = [];
+}
+
+/// <summary><c>budget: { dailyTokens: 500000, timeZone: Europe/Amsterdam }</c>.</summary>
+public sealed class TriggerBudget
+{
+    /// <summary>
+    /// Input plus output tokens all runs of this trigger may use per calendar day. Once spent, events are dropped (status
+    /// <c>over_budget</c>) until midnight, and a run that reaches it mid-way fails.
+    /// </summary>
+    public long? DailyTokens { get; set; }
+    /// <summary>Where the day starts; the daemon's local time zone when unset.</summary>
+    public string? TimeZone { get; set; }
+
+    public static TimeZoneInfo Zone(string id)
+    {
+        try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException) { throw new ConfigException($"budget.timeZone: unknown time zone '{id}'."); }
+    }
+
+    /// <summary>The start of the current budget day.</summary>
+    public DateTimeOffset DayStart(DateTimeOffset now)
+    {
+        TimeZoneInfo zone = TimeZone is { } id ? Zone(id) : TimeZoneInfo.Local;
+        DateTimeOffset local = TimeZoneInfo.ConvertTime(now, zone);
+        DateTime midnight = local.Date;
+        return new DateTimeOffset(midnight, zone.GetUtcOffset(midnight));
+    }
 }
 
 /// <summary><c>rateLimit: { perSender: 10/1h }</c>.</summary>

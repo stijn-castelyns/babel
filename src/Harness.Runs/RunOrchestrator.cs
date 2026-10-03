@@ -354,6 +354,15 @@ public sealed class RunOrchestrator : IAsyncDisposable
             if (template.Limits.MaxTokens is long maxTokens) agent.Limits.MaxTokens = maxTokens;
             if (template.Limits.MaxToolIterations is int maxTools) agent.Limits.MaxToolIterations = maxTools;
         }
+        if (request.TokenAllowance?.Invoke(record.Id) is (long allowance, string reason))
+        {
+            long cap = Math.Max(0, allowance);   // the allowance excludes this run, so it bounds the run's whole usage
+            if (agent.Limits.MaxTokens is not long own || cap < own)
+            {
+                agent.Limits.MaxTokens = cap;
+                agent.Limits.MaxTokensReason = reason;
+            }
+        }
         if (ignored.Count > 0)
             Emit(session, record.Id, EventTypes.RunState, new JsonObject
             {

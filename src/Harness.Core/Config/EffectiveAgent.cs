@@ -64,7 +64,7 @@ public static class EffectiveAgent
         Allowlist = d.Allowlist.ToDictionary(kv => kv.Key, kv => kv.Value.ToList()),
         Sandbox = d.Sandbox,
         Compaction = new CompactionConfig { ToolResultsAfter = d.Compaction.ToolResultsAfter, SlidingWindowTurns = d.Compaction.SlidingWindowTurns },
-        Limits = new AgentLimits { MaxToolIterations = d.Limits.MaxToolIterations, MaxRunMinutes = d.Limits.MaxRunMinutes, MaxTokens = d.Limits.MaxTokens },
+        Limits = new AgentLimits { MaxToolIterations = d.Limits.MaxToolIterations, MaxRunMinutes = d.Limits.MaxRunMinutes, MaxTokens = d.Limits.MaxTokens, MaxTokensReason = d.Limits.MaxTokensReason },
         SourcePath = d.SourcePath,
     };
 }

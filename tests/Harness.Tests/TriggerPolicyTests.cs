@@ -206,6 +206,31 @@ public class TriggerPolicyTests
         Assert.Contains("from someone else", prompts);
     }
 
+    [Fact]
+    public async Task Daily_token_budget_caps_runs_and_then_drops_events()
+    {
+        // Every scripted model call costs 110 tokens.
+        List<string> prompts = [];
+        await using TestHome home = await ChatHomeAsync("budget: { dailyTokens: 250, timeZone: UTC }",
+            Recording(prompts, p => p == "long" ? ScriptedChatClient.Call("list", new() { ["path"] = "." }) : ScriptedChatClient.Text("ok")));
+
+        Assert.Equal(RunStates.Succeeded, (await FireAndWaitAsync(home, "chat", "one")).State);
+        Assert.Equal(RunStates.Succeeded, (await FireAndWaitAsync(home, "chat", "two")).State);
+        Assert.Equal(220, home.Triggers.TokensUsedToday(home.Triggers.Get("chat")!, null));
+
+        // 30 tokens are left: the run gets its first model call, and fails before the second.
+        RunResult capped = await FireAndWaitAsync(home, "chat", "long");
+        Assert.Equal(RunStates.Failed, capped.State);
+        Assert.Equal("Trigger 'chat' used up its daily token budget of 250.", capped.Error);
+
+        InvalidOperationException refused = await Assert.ThrowsAsync<InvalidOperationException>(() => home.Triggers.FireAsync("chat", "more", null, CancellationToken.None));
+        Assert.Contains("daily token budget of 250 is used up", refused.Message);
+        await MessagesSource.Current!.SendAsync("+1", "from chat");
+        await Task.Delay(300);
+        Assert.Equal(3, Runs(home, "chat").Count);
+        Assert.DoesNotContain("from chat", prompts);
+    }
+
     private static void InterlockedMax(ref int target, int value)
     {
         int current;

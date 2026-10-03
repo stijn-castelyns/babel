@@ -425,6 +425,13 @@ public sealed class TriggerEngine : IHostedService
             string prompt = TemplateVariables.Render(def.Prompt ?? template?.Prompt ?? "{event.text}", vars);
             if (prompt.Trim().Length == 0) prompt = $"Trigger {def.Id} fired.";
 
+            if (def.Budget.DailyTokens is long budget && TokensUsedToday(def, null) is var used && used >= budget)
+            {
+                _log.LogWarning("Trigger {Id}: daily token budget of {Budget:N0} is used up ({Used:N0}); event {EventId} dropped", def.Id, budget, used, evt.EventId);
+                foreach (Accepted a in events) _queue.Mark(a.Queued, "over_budget");
+                return Task.FromResult(new Outcome(null, "over_budget", $"the daily token budget of {budget:N0} is used up"));
+            }
+
             string? key = def.Session is { } keyTemplate ? TemplateVariables.Render(keyTemplate, vars) : null;
             string runId = Ids.NewRunId();
             TriggerSlots.Gate? gate = null;
@@ -471,6 +478,9 @@ public sealed class TriggerEngine : IHostedService
                     ApprovalTimeout = approvalTimeout,
                     OnApprovalTimeoutApprove = def.Approvals.OnTimeout == "approve",
                     Gate = gate,
+                    TokenAllowance = def.Budget.DailyTokens is long daily
+                        ? id => (daily - TokensUsedToday(def, id), $"Trigger '{def.Id}' used up its daily token budget of {daily:N0}.")
+                        : null,
                 });
             }
             catch
@@ -488,6 +498,16 @@ public sealed class TriggerEngine : IHostedService
             foreach (Accepted a in events) _queue.Mark(a.Queued, "failed");
             throw;
         }
+    }
+
+    /// <summary>Tokens the trigger's runs used since the start of the budget day, live usage of active runs included.</summary>
+    public long TokensUsedToday(TriggerDefinition def, string? exceptRunId)
+    {
+        Dictionary<string, long> tokens = _runs.Sessions.Index.TriggerRunTokens(def.Id, def.Budget.DayStart(DateTimeOffset.UtcNow));
+        foreach (RunRecord active in _runs.ActiveRuns())
+            if (active.TriggerId == def.Id && tokens.ContainsKey(active.Id)) tokens[active.Id] = active.InputTokens + active.OutputTokens;
+        if (exceptRunId is not null) tokens.Remove(exceptRunId);
+        return tokens.Values.Sum();
     }
 
     private SessionFolder SessionFor(TriggerDefinition def, RunTemplate? template, TriggerEvent evt, IReadOnlyDictionary<string, string> vars, string? key, string runId)
