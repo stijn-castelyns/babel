@@ -52,7 +52,14 @@ fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; 
 `triggers:` it follows every other trigger, never its own. Its event text is the run's text (its error when it did not
 succeed), it inherits the run's reply address, and `{event.data.run.state}`, `{event.data.run.output.x}`… expose the rest:
 every value in an event's data is a `{event.data.a.b}` placeholder. Chains through `run-completed` and the `run` sink share
-one depth count, stored with the queued events, and stop after 5 runs. A trigger references a run template with `template:`; its
+one depth count, stored with the queued events, and stop after 5 runs.
+
+`coalesce: 5s` merges events of one conversation (the rendered session key, or the sender) into one run: each event passes
+the sender filter and `OnTriggerFired` hooks on its own, then waits; the window restarts with every new event, capped at six
+windows after the first. The merged event joins the texts with newlines, combines attachments, keeps the last reply address
+and lists the originals in `{event.data.coalesced}`; every original is marked `started` with the run's id. Waiting events
+stay `pending` in the durable queue, so a restart or reload replays and re-coalesces them, and an in-memory set keeps a replay
+from running an event this daemon is already handling. Manual fires and the `run` sink never coalesce. A trigger references a run template with `template:`; its
 `agent:` and `prompt:` override the template's.
 
 **Run templates (phase 4)**: folders under `templates/` with a `template.yaml` (agent, sandbox, workspace steps, `keep`,
@@ -115,7 +122,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Phase 4:** coalescing, concurrency limits per trigger, per-sender rate limits,
+- **Phase 4:** concurrency limits per trigger, per-sender rate limits,
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.

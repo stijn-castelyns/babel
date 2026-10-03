@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Harness.Core;
 using Harness.Core.Config;
 
 namespace Harness.Triggers;
@@ -34,6 +35,11 @@ public sealed class TriggerDefinition
     [YamlDotNet.Serialization.YamlIgnore]
     public JsonArray? Sinks { get; set; }
     public TriggerApprovals Approvals { get; set; } = new();
+    /// <summary>
+    /// Merge events of one conversation (the session key, or the sender) that arrive within this window into one run, for
+    /// example <c>5s</c>. The window restarts with every event, up to six windows after the first.
+    /// </summary>
+    public string? Coalesce { get; set; }
 
     [YamlDotNet.Serialization.YamlIgnore]
     public string SourceType => Source["type"]?.GetValue<string>() ?? "manual";
@@ -61,7 +67,19 @@ public sealed class TriggerDefinition
         def.Source = Yaml.ToJsonNode(source) as JsonObject ?? new JsonObject { ["type"] = "manual" };
         def.Sinks = sinks is null ? null : Harness.Runs.Delivery.OutputDelivery.Normalize(sinks);
         if (string.IsNullOrEmpty(def.Id)) def.Id = fallbackId;
+        def.Validate();
         return def;
+    }
+
+    private void Validate()
+    {
+        static TimeSpan Duration(string text, string field)
+        {
+            try { return Durations.Parse(text); }
+            catch (FormatException) { throw new ConfigException($"{field}: '{text}' is not a duration such as 5s, 10m or 1h."); }
+        }
+        if (Coalesce is { } coalesce && Duration(coalesce, "coalesce") <= TimeSpan.Zero) throw new ConfigException("coalesce must be positive.");
+        if (Approvals.Timeout is { } timeout) Duration(timeout, "approvals.timeout");
     }
 }
 

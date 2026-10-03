@@ -1,8 +1,11 @@
+using System.Text.Json.Nodes;
 using Harness.Core.Sessions;
+using Harness.Extensions.Plugins;
 using Harness.Runs;
 using Harness.Sdk;
 using Harness.Tests.TestSupport;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Harness.Tests;
 
@@ -71,5 +74,84 @@ public class TriggerPolicyTests
         await RunOrchestratorTests.WaitForAsync(() => Runs(home, "loop").Count == 6 && Runs(home, "loop").All(r => RunStates.IsFinal(r.State)) ? "ok" : null);
         await Task.Delay(500);
         Assert.Equal(6, Runs(home, "loop").Count);
+    }
+
+    /// <summary>A model that records every prompt and answers "ok".</summary>
+    private static ScriptedChatClient Recording(List<string> prompts, Func<string, ChatResponse>? reply = null) => new((messages, _) =>
+    {
+        string last = messages.Last(m => m.Role == ChatRole.User).Text;
+        if (messages.Any(m => m.Role == ChatRole.Tool)) return ScriptedChatClient.Text("done");
+        lock (prompts) prompts.Add(last);
+        return reply?.Invoke(last) ?? ScriptedChatClient.Text("ok");
+    });
+
+    private static async Task<TestHome> ChatHomeAsync(string triggerYaml, ScriptedChatClient model)
+    {
+        TestHome home = new();
+        File.WriteAllText(Path.Combine(home.Paths.TriggersDir, "chat.yaml"), $"""
+            source: {"{"} type: test-messages {"}"}
+            workspace: {home.Workspace}
+            allowUnsandboxed: true
+            {triggerYaml}
+            """);
+        home.Build(model);
+        home.Services!.GetRequiredService<PluginRegistry>().Add(new MessagesPlugin());
+        await home.Triggers.StartAsync(CancellationToken.None);
+        return home;
+    }
+
+    [Fact]
+    public async Task Coalesce_merges_quick_messages_per_conversation_and_survives_a_reload()
+    {
+        List<string> prompts = [];
+        await using TestHome home = await ChatHomeAsync("coalesce: 0.4s\nsession: \"chat:{event.sender}\"", Recording(prompts));
+
+        await MessagesSource.Current!.SendAsync("+1", "first");
+        await MessagesSource.Current!.SendAsync("+2", "other person");
+        await MessagesSource.Current!.SendAsync("+1", "second");
+        await Task.Delay(150);
+        await MessagesSource.Current!.SendAsync("+1", "third");
+        Assert.Empty(Runs(home, "chat"));   // nothing runs while messages keep arriving
+
+        await RunOrchestratorTests.WaitForAsync(() => Runs(home, "chat").Count(r => RunStates.IsFinal(r.State)) == 2 ? "ok" : null);
+        Assert.Contains("first\nsecond\nthird", prompts);
+        Assert.Contains("other person", prompts);
+
+        // Messages still waiting in a batch when the engine stops stay queued, and the next start coalesces them again.
+        await MessagesSource.Current!.SendAsync("+1", "before reload");
+        await MessagesSource.Current!.SendAsync("+1", "also before");
+        await home.Triggers.ReloadAsync(CancellationToken.None);
+        await RunOrchestratorTests.WaitForAsync(() => Runs(home, "chat").Count(r => RunStates.IsFinal(r.State)) == 3 ? "ok" : null);
+        Assert.Contains("before reload\nalso before", prompts);
+        await Task.Delay(800);
+        Assert.Equal(3, Runs(home, "chat").Count);
+    }
+
+    private sealed class MessagesPlugin : IHarnessPlugin
+    {
+        public string Id => "test.messages";
+        public void Configure(IPluginBuilder plugin) => plugin.AddTriggerSource<MessagesSource>("test-messages");
+    }
+
+    /// <summary>A chat-like source: tests push messages into it.</summary>
+    private sealed class MessagesSource : ITriggerSource
+    {
+        public static MessagesSource? Current;
+        private TriggerSourceContext? _context;
+
+        public string Type => "test-messages";
+
+        public Task StartAsync(TriggerSourceContext context, CancellationToken cancellationToken)
+        {
+            _context = context;
+            Current = this;
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public async Task SendAsync(string sender, string text) =>
+            await _context!.EmitAsync(new TriggerEvent(Guid.NewGuid().ToString("N"), _context.TriggerId, DateTimeOffset.UtcNow, sender, text, [],
+                new JsonObject(), null), CancellationToken.None);
     }
 }

@@ -8,6 +8,8 @@ public static class Durations
     public static TimeSpan Parse(string text)
     {
         text = text.Trim();
+        if (text.EndsWith("ms", StringComparison.Ordinal) && double.TryParse(text[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out double ms))
+            return TimeSpan.FromMilliseconds(ms);
         if (text.Length >= 2 && double.TryParse(text[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out double n))
             switch (text[^1])
             {
