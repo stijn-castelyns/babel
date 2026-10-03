@@ -9,7 +9,8 @@ namespace Harness.Triggers.Sources;
 
 /// <summary>
 /// <c>POST /hooks/&lt;trigger-id&gt;</c> with an HMAC-SHA256 signature of the body in <c>X-Harness-Signature: sha256=&lt;hex&gt;</c>
-/// (or GitHub's <c>X-Hub-Signature-256</c>), keyed with <c>source.secret</c>. Unsigned requests are rejected.
+/// (or GitHub's <c>X-Hub-Signature-256</c>), keyed with <c>source.secret</c>. Unsigned requests are rejected. A JSON body's
+/// <c>text</c> and <c>sender</c> fields become the event's text and sender (for sender filters, rate limits and coalescing).
 /// </summary>
 public sealed class WebhookSource : ITriggerSource
 {
@@ -46,7 +47,8 @@ public sealed class WebhookSource : ITriggerSource
         string eventId = http.Request.Headers["X-Harness-Event-Id"].FirstOrDefault()
             ?? http.Request.Headers["X-GitHub-Delivery"].FirstOrDefault()
             ?? Convert.ToHexStringLower(SHA256.HashData(body))[..32];
-        await context.EmitAsync(new TriggerEvent(eventId, context.TriggerId, DateTimeOffset.UtcNow, null,
+        string? sender = data["sender"]?.GetValueKind() == JsonValueKind.String ? data["sender"]!.GetValue<string>() : null;
+        await context.EmitAsync(new TriggerEvent(eventId, context.TriggerId, DateTimeOffset.UtcNow, sender,
             data["text"]?.GetValueKind() == JsonValueKind.String ? data["text"]!.GetValue<string>() : null, [], data, null), http.RequestAborted);
         http.Response.StatusCode = StatusCodes.Status202Accepted;
     }

@@ -57,7 +57,7 @@ listener (bearer token) and a separate webhook listener that serves only `/hooks
 **Triggers (phase 4, partial)**: durable SQLite queue with de-duplication by event id, sender allowlists,
 `OnTriggerFired` hooks, keyed sessions (`session: "whatsapp:{event.sender}"`), approval timeouts, enable/disable, manual
 fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; `skip`/`runOnce`/`catchUp`), `webhook`
-(HMAC-SHA256), `file-watch`, `manual`, `run-completed` and plugin sources. `run-completed` (`triggers: [a, b]` or
+(HMAC-SHA256; a JSON body's `text` and `sender` become the event's), `file-watch`, `manual`, `run-completed` and plugin sources. `run-completed` (`triggers: [a, b]` or
 `trigger: a`, `states:` defaulting to `succeeded`, or `any`) fires once per finished upstream run, after its delivery; without
 `triggers:` it follows every other trigger, never its own. Its event text is the run's text (its error when it did not
 succeed), it inherits the run's reply address, and `{event.data.run.state}`, `{event.data.run.output.x}`… expose the rest:
@@ -89,7 +89,7 @@ fires, chained runs and events without a sender are never limited.
 unless `timeZone:` is set), counted from the run index plus the live usage of active runs. Once it is spent, events are
 dropped with status `over_budget` and manual fires are refused with the reason. A run that starts while budget remains gets
 the rest as its token limit (the lower of that and the agent's or template's `maxTokens`), and fails with "Trigger 'x' used up
-its daily token budget" when it reaches it. `harness triggers ls` shows today's usage against the budget.
+its daily token budget" when it reaches it (checked before each model call, so the last call may overshoot). `harness triggers ls` shows today's usage against the budget.
 
 **Retention (phase 4)**: `config.yaml` `retention: { sessions, interactiveSessions, runs, events, interval }` (ages such as
 `30d`, or `never`; everything but `events: 30d` defaults to `never`) and a trigger's own `retention: { sessions, runs }`. The
