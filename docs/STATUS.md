@@ -1,6 +1,7 @@
 # Implementation status
 
-This tracks the build against *Custom Coding Agent Harness — Architecture & Design* (Oct 2026).
+This tracks the build against *Custom Coding Agent Harness — Architecture & Design* (Oct 2026), kept in
+[DESIGN.md](DESIGN.md).
 The roadmap there has six phases; phases 1–3 give a usable local coding agent, phase 4 makes it autonomous,
 phases 5–6 make it reachable from a phone and chat apps.
 

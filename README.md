@@ -7,7 +7,7 @@ around it: tools, sandboxing, sessions, approvals, triggers, plugins and the dae
 The daemon is the only process that talks to models, runs tools or touches sessions. The CLI (and later the TUI and PWA)
 are clients of the same API, so a run started by a trigger can be watched and approved from any terminal.
 
-See [docs/STATUS.md](docs/STATUS.md) for what is built so far, where the implementation deviates from the design, and
+The design this follows is [docs/DESIGN.md](docs/DESIGN.md). See [docs/STATUS.md](docs/STATUS.md) for what is built so far, where the implementation deviates from the design, and
 what comes next.
 
 ## Build and run
