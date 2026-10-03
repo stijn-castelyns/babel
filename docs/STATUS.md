@@ -68,7 +68,12 @@ slot through approvals and delivery until it is final, and can be cancelled whil
 durable queue until it gets the slot, so a restart replays them (interrupted runs are now marked failed before hosted
 services start, so the replay sees them as final). With `onBusy: drop` the event is dropped and logged with status `busy`,
 and a manual fire answers with the reason. These sit on top of the daemon-wide `runs.globalConcurrency` and per-model-profile
-`maxConcurrency` limits. A trigger references a run template with `template:`; its
+`maxConcurrency` limits.
+
+`rateLimit: { perSender: 10/1h }` (also `3/m`) counts a sender's events in a sliding window from the durable queue, which now
+records the sender: only events queued earlier that were let through count, so two messages arriving together cannot both
+push each other over. Events over the limit are dropped and logged with status `rate_limited` before any hook runs. Manual
+fires, chained runs and events without a sender are never limited. A trigger references a run template with `template:`; its
 `agent:` and `prompt:` override the template's.
 
 **Run templates (phase 4)**: folders under `templates/` with a `template.yaml` (agent, sandbox, workspace steps, `keep`,
@@ -131,7 +136,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Phase 4:** per-sender rate limits,
+- **Phase 4:**
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.

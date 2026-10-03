@@ -188,6 +188,24 @@ public class TriggerPolicyTests
         Assert.Contains("next", prompts);
     }
 
+    [Fact]
+    public async Task Rate_limit_drops_a_senders_events_beyond_the_window_allowance()
+    {
+        List<string> prompts = [];
+        await using TestHome home = await ChatHomeAsync("rateLimit: { perSender: 2/1h }", Recording(prompts));
+
+        await Task.WhenAll(Enumerable.Range(1, 4).Select(i => MessagesSource.Current!.SendAsync("+1", $"msg {i}")));
+        await MessagesSource.Current!.SendAsync("+2", "from someone else");
+        RunRecord manual = await home.Triggers.FireAsync("chat", "manual", null, CancellationToken.None);   // never limited
+        await home.Orchestrator.WaitAsync(manual.Id).WaitAsync(TimeSpan.FromSeconds(30));
+        await RunOrchestratorTests.WaitForAsync(() => Runs(home, "chat").Count(r => RunStates.IsFinal(r.State)) == 4 ? "ok" : null);
+        await Task.Delay(300);
+
+        Assert.Equal(4, Runs(home, "chat").Count);
+        Assert.Equal(2, prompts.Count(p => p.StartsWith("msg ", StringComparison.Ordinal)));
+        Assert.Contains("from someone else", prompts);
+    }
+
     private static void InterlockedMax(ref int target, int value)
     {
         int current;

@@ -19,12 +19,13 @@ public sealed class TriggerQueue(HarnessDb db)
         using SqliteConnection c = db.Open();
         using SqliteCommand cmd = c.CreateCommand();
         cmd.CommandText = """
-            INSERT OR IGNORE INTO trigger_events (event_id, trigger_id, received_at, payload, status)
-            VALUES ($e, $t, $r, $p, 'pending')
+            INSERT OR IGNORE INTO trigger_events (event_id, trigger_id, received_at, payload, status, sender)
+            VALUES ($e, $t, $r, $p, 'pending', $s)
             """;
         cmd.Parameters.AddWithValue("$e", evt.EventId);
         cmd.Parameters.AddWithValue("$t", evt.TriggerId);
-        cmd.Parameters.AddWithValue("$r", evt.ReceivedAt.ToString("O"));
+        cmd.Parameters.AddWithValue("$r", evt.ReceivedAt.ToUniversalTime().ToString("O"));
+        cmd.Parameters.AddWithValue("$s", (object?)evt.Sender ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$p", JsonSerializer.Serialize(evt, Json));
         return cmd.ExecuteNonQuery() == 1;
     }
@@ -55,6 +56,28 @@ public sealed class TriggerQueue(HarnessDb db)
         cmd.Parameters.AddWithValue("$t", evt.TriggerId);
         cmd.Parameters.AddWithValue("$e", evt.EventId);
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Events from <paramref name="sender"/> to a trigger since <paramref name="since"/> that were queued before
+    /// <paramref name="eventId"/> and let through (not filtered, rate-limited, dropped or refused). Counting by queue order means
+    /// two events arriving together cannot each push the other over the limit.
+    /// </summary>
+    public int CountFromSenderBefore(string triggerId, string sender, DateTimeOffset since, string eventId)
+    {
+        using SqliteConnection c = db.Open();
+        using SqliteCommand cmd = c.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*) FROM trigger_events
+            WHERE trigger_id = $t AND sender = $s AND received_at >= $since
+              AND rowid < (SELECT rowid FROM trigger_events WHERE trigger_id = $t AND event_id = $e)
+              AND status NOT IN ('filtered', 'rate_limited', 'dropped', 'busy', 'over_budget')
+            """;
+        cmd.Parameters.AddWithValue("$t", triggerId);
+        cmd.Parameters.AddWithValue("$s", sender);
+        cmd.Parameters.AddWithValue("$since", since.ToUniversalTime().ToString("O"));
+        cmd.Parameters.AddWithValue("$e", eventId);
+        return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
     /// <summary>How many runs deep the chain that started <paramref name="runId"/> is (0 for a run no other run started).</summary>

@@ -334,6 +334,16 @@ public sealed class TriggerEngine : IHostedService
             return (new Outcome(null, "filtered", $"sender {evt.Sender ?? "(none)"} is not allowed"), evt);
         }
 
+        if (def.RateLimit.PerSender is { } perSender && !internalSender && evt.Sender is { } sender)
+        {
+            (int count, TimeSpan window) = TriggerRateLimit.Parse(perSender);
+            if (_queue.CountFromSenderBefore(def.Id, sender, DateTimeOffset.UtcNow - window, evt.EventId) >= count)
+            {
+                _log.LogWarning("Trigger {Id}: sender {Sender} is over its rate limit of {Limit}; event dropped", def.Id, sender, perSender);
+                return (new Outcome(null, "rate_limited", $"sender {sender} is over the rate limit of {perSender}"), evt);
+            }
+        }
+
         TriggerFiredContext fired = new() { Event = evt };
         await new HookPipeline([.. _plugins.Plugins.SelectMany(p => p.Hooks)]).TriggerFiredAsync(fired, ct);
         if (fired.Dropped)

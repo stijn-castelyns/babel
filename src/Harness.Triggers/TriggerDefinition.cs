@@ -41,6 +41,7 @@ public sealed class TriggerDefinition
     /// </summary>
     public string? Coalesce { get; set; }
     public TriggerConcurrency Concurrency { get; set; } = new();
+    public TriggerRateLimit RateLimit { get; set; } = new();
 
     [YamlDotNet.Serialization.YamlIgnore]
     public string SourceType => Source["type"]?.GetValue<string>() ?? "manual";
@@ -82,6 +83,7 @@ public sealed class TriggerDefinition
         if (Coalesce is { } coalesce && Duration(coalesce, "coalesce") <= TimeSpan.Zero) throw new ConfigException("coalesce must be positive.");
         if (Approvals.Timeout is { } timeout) Duration(timeout, "approvals.timeout");
         if (Concurrency.Global is < 1 || Concurrency.PerSession is < 1) throw new ConfigException("concurrency limits must be at least 1.");
+        if (RateLimit.PerSender is { } perSender) _ = TriggerRateLimit.Parse(perSender);
         if (Concurrency.OnBusy is not ("queue" or "drop")) throw new ConfigException($"concurrency.onBusy must be queue or drop, not '{Concurrency.OnBusy}'.");
     }
 }
@@ -90,6 +92,31 @@ public sealed class TriggerFilter
 {
     /// <summary>Sender allowlist; when set, everything else is dropped and logged.</summary>
     public List<string> Senders { get; set; } = [];
+}
+
+/// <summary><c>rateLimit: { perSender: 10/1h }</c>.</summary>
+public sealed class TriggerRateLimit
+{
+    /// <summary>
+    /// At most this many events per sender in a sliding window, written <c>count/window</c> (<c>10/1h</c>, <c>3/m</c>). Events
+    /// over the limit are dropped and logged (status <c>rate_limited</c>). Manual fires and chained runs are never limited.
+    /// </summary>
+    public string? PerSender { get; set; }
+
+    public static (int Count, TimeSpan Window) Parse(string text)
+    {
+        string[] parts = text.Split('/', 2, StringSplitOptions.TrimEntries);
+        TimeSpan window = default;
+        bool ok = parts.Length == 2 && int.TryParse(parts[0], out int count) && count > 0 && TryDuration(parts[1], out window) && window > TimeSpan.Zero;
+        if (!ok) throw new ConfigException($"rateLimit.perSender: '{text}' is not a limit such as 10/1h or 3/m.");
+        return (int.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture), window);
+    }
+
+    private static bool TryDuration(string text, out TimeSpan window)
+    {
+        try { window = Durations.Parse(char.IsDigit(text.FirstOrDefault()) ? text : "1" + text); return true; }
+        catch (Exception ex) when (ex is FormatException or OverflowException) { window = default; return false; }
+    }
 }
 
 /// <summary><c>concurrency: { perSession: 1, global: 2, onBusy: queue }</c>.</summary>

@@ -60,6 +60,8 @@ public sealed class HarnessDb
             """);
         AddColumn(c, "runs", "output", "TEXT");
         AddColumn(c, "runs", "files", "TEXT");
+        AddColumn(c, "trigger_events", "sender", "TEXT");
+        Exec(c, "CREATE INDEX IF NOT EXISTS ix_trigger_events_sender ON trigger_events(trigger_id, sender, received_at)");
     }
 
     /// <summary>Adds a column that a later version introduced to a table an earlier version created.</summary>
