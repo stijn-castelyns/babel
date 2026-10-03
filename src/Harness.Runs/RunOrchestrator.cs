@@ -7,6 +7,7 @@ using Harness.Core.Agents;
 using Harness.Core.Config;
 using Harness.Core.Sessions;
 using Harness.Extensions.Skills;
+using Harness.Runs.Templates;
 using Harness.Sandbox;
 using Harness.Sdk;
 using Microsoft.Agents.AI;
@@ -33,6 +34,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
     private readonly EventHub _hub;
     private readonly ApprovalBroker _approvals;
     private readonly ApprovalStore _store;
+    private readonly WorkspaceBuilder _workspaces;
     private readonly IServiceProvider _services;
     private readonly ILogger _log;
 
@@ -45,7 +47,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
 
     public RunOrchestrator(ConfigCatalog catalog, SessionStore sessions, AgentFactory agents, SandboxFactory sandboxes, SkillsExtension skills,
-        SecretStore secrets, TrustStore trust, SessionRuntimeRegistry runtime, EventHub hub, ApprovalBroker approvals, ApprovalStore store, IServiceProvider services,
+        SecretStore secrets, TrustStore trust, SessionRuntimeRegistry runtime, EventHub hub, ApprovalBroker approvals, ApprovalStore store, WorkspaceBuilder workspaces, IServiceProvider services,
         ILoggerFactory? loggerFactory = null)
     {
         _catalog = catalog;
@@ -59,6 +61,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
         _hub = hub;
         _approvals = approvals;
         _store = store;
+        _workspaces = workspaces;
         _services = services;
         _log = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RunOrchestrator>();
         _global = new SemaphoreSlim(Math.Max(1, catalog.Config.Runs.GlobalConcurrency));
@@ -115,7 +118,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
         SessionFolder session = _sessions.Open(request.SessionId);
         RunRecord record = new()
         {
-            Id = Ids.NewRunId(),
+            Id = request.RunId ?? Ids.NewRunId(),
             SessionId = session.Id,
             Agent = session.Info.Agent,
             Model = session.Info.Model,
@@ -168,9 +171,9 @@ public sealed class RunOrchestrator : IAsyncDisposable
             _approvals.CancelRun(runId);
             return true;
         }
-        if (!_parked.TryRemove(runId, out _)) return false;
+        if (!_parked.TryRemove(runId, out ParkedRequest? parked)) return false;
         _approvals.CancelRun(runId);
-        FinishParked(runId, RunStates.Cancelled, "Cancelled.");
+        FinishParked(runId, RunStates.Cancelled, "Cancelled.", parked.Template);
         return true;
     }
 
@@ -231,6 +234,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
         }
 
         _store.Unpark(record.Id);
+        CleanupWorkspace(active.Request.Template, record.Id, result.State);
         record.State = result.State;
         record.FinishedAt = DateTimeOffset.UtcNow;
         record.Error = result.Error;
@@ -259,29 +263,62 @@ public sealed class RunOrchestrator : IAsyncDisposable
         SetState(session, record, RunStates.Preparing);
         record.StartedAt ??= DateTimeOffset.UtcNow;
 
-        (AgentDefinition agent, IReadOnlyList<string> ignored) = EffectiveAgent.Resolve(_catalog.Agent(session.Info.Agent), session.Info.Workspace, _trust);
+        // A templated run gets a fresh workspace under runs/<run-id>/workspace; a keyed session follows it from run to run.
+        RunTemplate? template = request.Template is { } templateRun ? _catalog.Template(templateRun.Name) : null;
+        if (template is not null)
+        {
+            string runWorkspace = _workspaces.WorkspaceFor(record.Id);
+            Directory.CreateDirectory(runWorkspace);
+            if (session.Info.Workspace != runWorkspace)
+            {
+                session.Info.Workspace = runWorkspace;
+                session.Info.WorkingDirectory = null;
+                session.Save();
+            }
+        }
+        string workspace = session.Info.Workspace;
+        AgentDefinition baseAgent = _catalog.Agent(session.Info.Agent);
+        string sandboxName = template?.Sandbox ?? baseAgent.Sandbox;
+        int maxMinutes = template?.Limits.MaxRunMinutes ?? baseAgent.Limits.MaxRunMinutes;
+
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(outer);
+        System.Diagnostics.Stopwatch elapsed = System.Diagnostics.Stopwatch.StartNew();
+        limit.CancelAfter(TimeSpan.FromMinutes(Math.Max(1, maxMinutes)));
+        limit.Token.Register(() => { if (!outer.IsCancellationRequested) active.TimedOut = true; });
+        CancellationToken ct = limit.Token;
+        using IDisposable lease = session.AcquireLease(record.Id);
+
+        // Workspace steps run before any model call; a failing step fails the run. A resumed run already has its workspace.
+        if (template is not null && !request.Resumed)
+        {
+            SandboxSpec setup = RequireSandbox(_sandboxes.Resolve(sandboxName, workspace), request, baseAgent.Name);
+            await _workspaces.BuildAsync(template, record.Id, workspace, request.Template!.Variables, setup, (type, data) => Emit(session, record.Id, type, data), ct);
+        }
+
+        (AgentDefinition agent, IReadOnlyList<string> ignored) = EffectiveAgent.Resolve(baseAgent, workspace, _trust);
+        if (template is not null)
+        {
+            // The template decides the sandbox and limits; folder config in a cloned repository cannot change them.
+            agent.Sandbox = sandboxName;
+            agent.Limits.MaxRunMinutes = maxMinutes;
+            if (template.Limits.MaxTokens is long maxTokens) agent.Limits.MaxTokens = maxTokens;
+            if (template.Limits.MaxToolIterations is int maxTools) agent.Limits.MaxToolIterations = maxTools;
+        }
         if (ignored.Count > 0)
             Emit(session, record.Id, EventTypes.RunState, new JsonObject
             {
                 ["state"] = RunStates.Preparing,
-                ["notice"] = $"Ignored untrusted folder config: {string.Join("; ", ignored)}. Run 'harness trust {session.Info.Workspace}' to apply it.",
+                ["notice"] = $"Ignored untrusted folder config: {string.Join("; ", ignored)}. Run 'harness trust {workspace}' to apply it.",
             });
 
-        SandboxSpec spec = _sandboxes.Resolve(agent.Sandbox, session.Info.Workspace);
-        if (!request.Interactive && spec.Type == "none" && !request.AllowUnsandboxed)
-            throw new InvalidOperationException($"Triggered runs need a sandbox; agent '{agent.Name}' uses sandbox '{agent.Sandbox}' of type none. Set allowUnsandboxed: true on the trigger to override.");
+        SandboxSpec spec = RequireSandbox(_sandboxes.Resolve(agent.Sandbox, workspace), request, agent.Name);
         // Skill directories are mounted read-only so skill scripts can run inside the sandbox.
         IReadOnlyList<string> skillDirs = _skills.SkillDirectories(agent);
         spec = spec with { Mounts = [.. spec.Mounts, .. skillDirs.Select((d, i) => new MountSpec(d, $"/harness/skills/{i}", MountMode.ReadOnly))] };
-
-        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(outer);
-        int minutes = Math.Min(agent.Limits.MaxRunMinutes, spec.Limits.WallClockMinutes ?? int.MaxValue);
-        limit.CancelAfter(TimeSpan.FromMinutes(Math.Max(1, minutes)));
-        limit.Token.Register(() => { if (!outer.IsCancellationRequested) active.TimedOut = true; });
-        CancellationToken ct = limit.Token;
+        if (spec.Limits.WallClockMinutes is int wallClock && wallClock < maxMinutes)
+            limit.CancelAfter(TimeSpan.FromMinutes(Math.Max(1, wallClock)) - elapsed.Elapsed);
 
         await using ISandbox sandbox = await _sandboxes.CreateAsync(spec, ct);
-        using IDisposable lease = session.AcquireLease(record.Id);
         session.Info.Status = "running";
         session.Save();
 
@@ -301,7 +338,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
             Events = events,
             State = state,
             Interactive = request.Interactive,
-            RunInstructions = request.RunInstructions,
+            RunInstructions = JoinInstructions(request.RunInstructions, template?.Instructions),
             TriggerId = request.TriggerId,
             SecretValues = _secrets.Values(),
             SpillThresholdChars = _catalog.Config.Tools.SpillThresholdChars,
@@ -626,13 +663,13 @@ public sealed class RunOrchestrator : IAsyncDisposable
         }
         if (requests.Count != wanted.Count)
         {
-            FinishParked(runId, RunStates.Failed, "The approval requests of this run are missing from the session history.");
+            FinishParked(runId, RunStates.Failed, "The approval requests of this run are missing from the session history.", parked.Template);
             return;
         }
 
         if (!parked.Interactive && rows.Any(r => r.Answer!.Approved == false))
         {
-            FinishParked(runId, RunStates.Rejected, "An approval was denied.");
+            FinishParked(runId, RunStates.Rejected, "An approval was denied.", parked.Template);
             return;
         }
 
@@ -655,9 +692,10 @@ public sealed class RunOrchestrator : IAsyncDisposable
         _ = Task.Run(() => ExecuteAsync(active, session));
     }
 
-    private void FinishParked(string runId, string state, string error)
+    private void FinishParked(string runId, string state, string error, TemplateRun? template)
     {
         _store.Unpark(runId);
+        CleanupWorkspace(template, runId, state);
         if (_sessions.Index.GetRun(runId) is not { } record) return;
         record.State = state;
         record.Error = error;
@@ -671,6 +709,31 @@ public sealed class RunOrchestrator : IAsyncDisposable
                 ["inputTokens"] = record.InputTokens,
                 ["outputTokens"] = record.OutputTokens,
             });
+    }
+
+    /// <summary>Triggered runs refuse to start without a sandbox unless the trigger allows it.</summary>
+    private static SandboxSpec RequireSandbox(SandboxSpec spec, RunRequest request, string agentName)
+    {
+        if (!request.Interactive && spec.Type == "none" && !request.AllowUnsandboxed)
+            throw new InvalidOperationException($"Triggered runs need a sandbox; agent '{agentName}' uses sandbox '{spec.Name}' of type none. Set allowUnsandboxed: true on the trigger to override.");
+        return spec;
+    }
+
+    private static string? JoinInstructions(params string?[] parts)
+    {
+        string joined = string.Join("\n\n", parts.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p!.Trim()));
+        return joined.Length > 0 ? joined : null;
+    }
+
+    /// <summary>Applies a templated run's <c>keep</c> policy to its workspace.</summary>
+    private void CleanupWorkspace(TemplateRun? templateRun, string runId, string finalState)
+    {
+        if (templateRun is null) return;
+        string keep;
+        try { keep = _catalog.Template(templateRun.Name).Workspace.Keep; }
+        catch (ConfigException) { keep = "onFailure"; }
+        try { _workspaces.Cleanup(runId, keep, finalState); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _log.LogWarning(ex, "Removing the workspace of run {RunId} failed", runId); }
     }
 
     private RunResult Final(ActiveRun active, string state, string? text, string? error, RunContext? run = null) => new()

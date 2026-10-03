@@ -44,8 +44,7 @@ public static class HarnessServer
             o.SerializerOptions.PropertyNameCaseInsensitive = true;
         });
         builder.Services.AddHarnessRuntime(paths);
-        builder.Services.AddSingleton<TriggerQueue>();
-        builder.Services.AddSingleton<TriggerEngine>();
+        builder.Services.AddHarnessTriggers();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<TriggerEngine>());
         configure?.Invoke(builder.Services);
 

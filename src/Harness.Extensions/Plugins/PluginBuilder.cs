@@ -23,6 +23,7 @@ internal sealed class PluginBuilder(string id, IConfiguration configuration) : I
     public Dictionary<string, Type> TriggerSources { get; } = [];
     public Dictionary<string, Type> OutputSinks { get; } = [];
     public Dictionary<string, Type> SandboxProviders { get; } = [];
+    public Dictionary<string, Type> WorkspaceSteps { get; } = [];
 
     public IPluginBuilder AddTools<T>() where T : class { Services.AddSingleton<T>(); ToolTypes.Add(typeof(T)); return this; }
     public IPluginBuilder AddTool(Func<IToolContext, AITool> factory) { ToolFactories.Add(factory); return this; }
@@ -33,6 +34,7 @@ internal sealed class PluginBuilder(string id, IConfiguration configuration) : I
     public IPluginBuilder AddTriggerSource<T>(string type) where T : class, ITriggerSource { Services.AddSingleton<T>(); TriggerSources[type] = typeof(T); return this; }
     public IPluginBuilder AddOutputSink<T>(string type) where T : class, IOutputSink { Services.AddSingleton<T>(); OutputSinks[type] = typeof(T); return this; }
     public IPluginBuilder AddSandboxProvider<T>(string type) where T : class, ISandboxProvider { Services.AddSingleton<T>(); SandboxProviders[type] = typeof(T); return this; }
+    public IPluginBuilder AddWorkspaceStep<T>(string type) where T : class, IWorkspaceStep { Services.AddSingleton<T>(); WorkspaceSteps[type] = typeof(T); return this; }
 
     public LoadedPlugin Build(PluginManifest? manifest, PluginLoadContext? context)
     {
@@ -65,6 +67,7 @@ public sealed class LoadedPlugin : IAsyncDisposable
     public IReadOnlyDictionary<string, Type> TriggerSources => _b.TriggerSources;
     public IReadOnlyDictionary<string, Type> OutputSinks => _b.OutputSinks;
     public IReadOnlyDictionary<string, Type> SandboxProviders => _b.SandboxProviders;
+    public IReadOnlyDictionary<string, Type> WorkspaceSteps => _b.WorkspaceSteps;
 
     public IEnumerable<AITool> CreateTools(IToolContext context)
     {

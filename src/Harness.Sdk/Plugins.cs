@@ -31,6 +31,8 @@ public interface IPluginBuilder
     IPluginBuilder AddTriggerSource<T>(string type) where T : class, ITriggerSource;
     IPluginBuilder AddOutputSink<T>(string type) where T : class, IOutputSink;
     IPluginBuilder AddSandboxProvider<T>(string type) where T : class, ISandboxProvider;
+    /// <summary>A workspace step that run templates can use as <c>- &lt;type&gt;: { ... }</c>.</summary>
+    IPluginBuilder AddWorkspaceStep<T>(string type) where T : class, IWorkspaceStep;
 }
 
 /// <summary>What a tool factory knows about the run it is building tools for.</summary>

@@ -47,7 +47,21 @@ listener (bearer token) and a separate webhook listener that serves only `/hooks
 **Triggers (phase 4, partial)**: durable SQLite queue with de-duplication by event id, sender allowlists,
 `OnTriggerFired` hooks, keyed sessions (`session: "whatsapp:{event.sender}"`), approval timeouts, enable/disable, manual
 fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; `skip`/`runOnce`/`catchUp`), `webhook`
-(HMAC-SHA256), `file-watch`, `manual`, and plugin sources.
+(HMAC-SHA256), `file-watch`, `manual`, and plugin sources. A trigger references a run template with `template:`; its
+`agent:` and `prompt:` override the template's.
+
+**Run templates (phase 4)**: folders under `templates/` with a `template.yaml` (agent, sandbox, workspace steps, `keep`,
+prompt, instructions, input defaults, output contract, limits), parsed strictly except for the free-form steps and sinks.
+Every templated run gets a fresh `~/.harness/runs/<run-id>/workspace`, built in the `preparing` state before any model
+call: `git` (clone on the host, `ref`/`depth`/`into`, commit ids checked out detached), `copy` (from the template folder;
+`*.tmpl` files rendered with `{inputs.x}`, `{event.text}`, `{run.id}`, `{date}`… and written without the suffix; unknown
+placeholders are left alone), `run` (in the run's sandbox, in the workspace root, with the template folder mounted
+read-only at `/harness/template`; `./setup.sh` resolves to the template's copy), and plugin steps (`AddWorkspaceStep<T>`).
+Without `steps:` the template copies `files/` and runs `setup.sh` when they exist. A failing step fails the run; each step
+emits `WORKSPACE_STEP` events with its log. The template's `AGENTS.md` is copied to the workspace root (the folder prompt
+layer) and its `instructions:` join prompt layer 6. The template's sandbox and limits win over folder config in the built
+workspace. `keep: always | onFailure | never` (default `onFailure`) is applied when the run reaches its final state,
+including runs cancelled or rejected while parked. Keyed sessions follow their latest run's workspace.
 
 ## Deviations from the design
 
@@ -57,7 +71,9 @@ fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; 
 | `chat.AsBuilder().UseAIContextProviders(new CompactionProvider(...))` | `CompactingChatClient` runs the same strategies through `CompactionProvider.CompactAsync` | With the provider registered on the chat client, Agent Framework 1.23 stops passing request messages to the `ChatHistoryProvider` whenever a tool runs, so user messages were lost from history. Covered by `RunOrchestratorTests`. |
 | SQLite through EF Core | `Microsoft.Data.Sqlite` directly | The index is a handful of tables; EF Core arrives with ASP.NET Core Identity in phase 5. |
 | Secrets in the OS credential store | A 0600 `secrets.json` behind `SecretStore` | Keychain, DPAPI and libsecret slot in behind the same class. |
-| Triggers reference a run template | Triggers name `agent`, `workspace` and `prompt` directly | Run templates, output contracts and sinks are the rest of phase 4. |
+| Triggers reference a run template | Triggers reference a template, or name `agent`, `workspace` and `prompt` directly | The direct form stays for simple runs against an existing folder (a chat assistant in a named workspace) that need no workspace build. |
+| `run:` steps run `setup.sh` from the workspace | A `./name` missing from the workspace runs from the template folder, mounted read-only | Setup scripts work without copying them into the agent's workspace. |
+| `git` steps | Run on the host, not in the sandbox | Clones need network and credentials the sandbox (often `network: none`) does not have; no repository code runs during a clone. |
 | `network: allowlist` through an egress proxy | Treated as `none` | Fails closed until the proxy exists. |
 | Processes started from any thread | All child processes start from one dedicated thread (`ProcessSpawner`) | `bwrap --die-with-parent` uses `PR_SET_PDEATHSIG`, which fires when the forking *thread* exits; retiring thread-pool threads would kill sandboxed commands. |
 | Parked runs keep their whole `RunRequest` | Everything except per-run extra tools is kept | Extra tools (the future `submit_output`) are rebuilt from the run template when templates land. |
@@ -65,7 +81,7 @@ fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; 
 
 ## Not built yet
 
-- **Phase 4:** run templates (workspace steps, `setup.sh`, `keep`), output contracts with `submit_output` and retries,
+- **Phase 4:** output contracts with `submit_output` and retries,
   output sinks (`reply`, `file`, `webhook`, `run`), `run-completed` source, coalescing, per-sender rate limits,
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.

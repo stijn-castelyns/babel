@@ -4,8 +4,8 @@ using Harness.Core.Config;
 namespace Harness.Triggers;
 
 /// <summary>
-/// A trigger in <c>triggers/&lt;id&gt;.yaml</c>: when to run and for whom. Until run templates land, the trigger names the
-/// agent, workspace and prompt directly.
+/// A trigger in <c>triggers/&lt;id&gt;.yaml</c>: when to run and for whom. It references a run template (<c>template:</c>) that
+/// builds the run's workspace and declares the output contract, or names an agent and workspace directly for simple runs.
 /// </summary>
 public sealed class TriggerDefinition
 {
@@ -17,11 +17,17 @@ public sealed class TriggerDefinition
     public TriggerFilter Filter { get; set; } = new();
     /// <summary>Session key template, for example <c>whatsapp:{event.sender}</c>. Unset starts a fresh session per run.</summary>
     public string? Session { get; set; }
+    /// <summary>Run template under <c>templates/</c>. When set, every run gets a fresh workspace built by the template.</summary>
+    public string? Template { get; set; }
+    /// <summary>Agent; overrides the template's.</summary>
     public string? Agent { get; set; }
-    /// <summary>Named workspace or path.</summary>
+    /// <summary>Named workspace or path, for runs without a template.</summary>
     public string? Workspace { get; set; }
-    /// <summary>Prompt template; placeholders: <c>{event.text}</c>, <c>{event.sender}</c>, <c>{event.id}</c>, <c>{inputs.&lt;name&gt;}</c>, <c>{date}</c>.</summary>
-    public string Prompt { get; set; } = "{event.text}";
+    /// <summary>
+    /// Prompt; overrides the template's, and defaults to <c>{event.text}</c>. Placeholders: <c>{event.text}</c>, <c>{event.sender}</c>,
+    /// <c>{event.id}</c>, <c>{event.data}</c>, <c>{inputs.&lt;name&gt;}</c>, <c>{trigger.id}</c>, <c>{date}</c>.
+    /// </summary>
+    public string? Prompt { get; set; }
     public Dictionary<string, string> Inputs { get; set; } = [];
     public bool AllowUnsandboxed { get; set; }
     public TriggerApprovals Approvals { get; set; } = new();

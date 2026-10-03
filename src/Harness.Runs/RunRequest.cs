@@ -1,3 +1,4 @@
+using Harness.Runs.Templates;
 using Harness.Sdk;
 using Microsoft.Extensions.AI;
 
@@ -8,6 +9,13 @@ public sealed record RunRequest
 {
     public required string SessionId { get; init; }
     public required IReadOnlyList<ChatMessage> Messages { get; init; }
+    /// <summary>A run id chosen by the caller (a templated run needs it to name its workspace); unset generates one.</summary>
+    public string? RunId { get; init; }
+    /// <summary>
+    /// Set for runs built from a run template: the run gets a fresh workspace under <c>runs/&lt;run-id&gt;/workspace</c>, built by
+    /// the template's steps, and the template's output contract.
+    /// </summary>
+    public TemplateRun? Template { get; init; }
     /// <summary>True when a person can answer approvals. Unattended runs with no approver treat <c>ask</c> as <c>deny</c>.</summary>
     public bool Interactive { get; init; } = true;
     public string? TriggerId { get; init; }

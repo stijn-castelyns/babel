@@ -84,8 +84,13 @@ public sealed class PluginRegistry(ConfigCatalog catalog, ILoggerFactory? logger
     public IEnumerable<ISandboxProvider> SandboxProviders() =>
         _plugins.SelectMany(p => p.SandboxProviders.Values.Select(t => p.Resolve<ISandboxProvider>(t)));
 
-    public IEnumerable<IOutputSink> OutputSinks() =>
-        _plugins.SelectMany(p => p.OutputSinks.Values.Select(t => p.Resolve<IOutputSink>(t)));
+    /// <summary>Output sinks keyed by the type they were registered under.</summary>
+    public IEnumerable<(string Type, IOutputSink Sink)> OutputSinks() =>
+        _plugins.SelectMany(p => p.OutputSinks.Select(kv => (kv.Key, p.Resolve<IOutputSink>(kv.Value))));
+
+    /// <summary>Workspace steps keyed by the type they were registered under.</summary>
+    public IEnumerable<(string Type, IWorkspaceStep Step)> WorkspaceSteps() =>
+        _plugins.SelectMany(p => p.WorkspaceSteps.Select(kv => (kv.Key, p.Resolve<IWorkspaceStep>(kv.Value))));
 
     public IEnumerable<ITriggerSource> TriggerSources() =>
         _plugins.SelectMany(p => p.TriggerSources.Values.Select(t => p.Resolve<ITriggerSource>(t)));

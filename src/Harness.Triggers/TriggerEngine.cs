@@ -6,6 +6,7 @@ using Harness.Core.Config;
 using Harness.Core.Sessions;
 using Harness.Extensions.Plugins;
 using Harness.Runs;
+using Harness.Runs.Templates;
 using Harness.Sdk;
 using Harness.Triggers.Sources;
 using Microsoft.AspNetCore.Http;
@@ -25,6 +26,7 @@ public sealed class TriggerEngine : IHostedService
     private readonly ConfigCatalog _catalog;
     private readonly TriggerQueue _queue;
     private readonly RunOrchestrator _runs;
+    private readonly WorkspaceBuilder _workspaces;
     private readonly SecretStore _secrets;
     private readonly PluginRegistry _plugins;
     private readonly IServiceProvider _services;
@@ -34,12 +36,13 @@ public sealed class TriggerEngine : IHostedService
     private readonly List<(string TriggerId, ITriggerSource Source)> _started = [];
     private Dictionary<string, TriggerDefinition> _definitions = [];
 
-    public TriggerEngine(ConfigCatalog catalog, TriggerQueue queue, RunOrchestrator runs, SecretStore secrets, PluginRegistry plugins,
+    public TriggerEngine(ConfigCatalog catalog, TriggerQueue queue, RunOrchestrator runs, WorkspaceBuilder workspaces, SecretStore secrets, PluginRegistry plugins,
         IServiceProvider services, ILoggerFactory? loggerFactory = null)
     {
         _catalog = catalog;
         _queue = queue;
         _runs = runs;
+        _workspaces = workspaces;
         _secrets = secrets;
         _plugins = plugins;
         _services = services;
@@ -143,6 +146,7 @@ public sealed class TriggerEngine : IHostedService
                 try
                 {
                     TriggerDefinition def = TriggerDefinition.Load(file);
+                    if (def.Template is { } template) _ = _catalog.Template(template);   // a missing or broken template is a load error
                     if (!defs.TryAdd(def.Id, def)) errors.Add($"{file}: duplicate trigger id '{def.Id}'.");
                 }
                 catch (Exception ex) { errors.Add(ex.Message); }
@@ -217,12 +221,20 @@ public sealed class TriggerEngine : IHostedService
             }
             evt = fired.Event;
 
-            SessionFolder session = SessionFor(def, evt);
+            RunTemplate? template = def.Template is { } name ? _catalog.Template(name) : null;
+            Dictionary<string, string> vars = TemplateVariables.ForEvent(evt, template is null ? [def.Inputs] : [template.Inputs, def.Inputs]);
+            string prompt = TemplateVariables.Render(def.Prompt ?? template?.Prompt ?? "{event.text}", vars);
+            if (prompt.Trim().Length == 0) prompt = $"Trigger {def.Id} fired.";
+
+            string runId = Ids.NewRunId();
+            SessionFolder session = SessionFor(def, template, evt, vars, runId);
             TimeSpan? approvalTimeout = def.Approvals.Timeout is { } t ? Durations.Parse(t) : null;
             RunRecord run = _runs.Start(new RunRequest
             {
+                RunId = runId,
                 SessionId = session.Id,
-                Messages = [new ChatMessage(ChatRole.User, Render(def.Prompt, def, evt))],
+                Messages = [new ChatMessage(ChatRole.User, prompt)],
+                Template = template is null ? null : new TemplateRun(template.Name, vars),
                 Interactive = false,
                 TriggerId = def.Id,
                 ReplyTo = evt.ReplyTo,
@@ -242,40 +254,25 @@ public sealed class TriggerEngine : IHostedService
         }
     }
 
-    private SessionFolder SessionFor(TriggerDefinition def, TriggerEvent evt)
+    private SessionFolder SessionFor(TriggerDefinition def, RunTemplate? template, TriggerEvent evt, IReadOnlyDictionary<string, string> vars, string runId)
     {
-        string? key = def.Session is { } template ? Render(template, def, evt) : null;
+        string? key = def.Session is { } keyTemplate ? TemplateVariables.Render(keyTemplate, vars) : null;
         if (key is not null && _runs.Sessions.FindByKey(key) is { } existing) return existing;
-        string workspace = def.Workspace is { } ws
-            ? _catalog.Workspace(ws) ?? HarnessPaths.ExpandHome(ws)
-            : Path.Combine(_catalog.Paths.RunsDir, "scratch", def.Id);
+        string workspace = template is not null
+            ? _workspaces.WorkspaceFor(runId)
+            : def.Workspace is { } ws
+                ? _catalog.Workspace(ws) ?? HarnessPaths.ExpandHome(ws)
+                : Path.Combine(_catalog.Paths.RunsDir, "scratch", def.Id);
         Directory.CreateDirectory(workspace);
         return _runs.CreateSession(new SessionRequest
         {
-            Agent = def.Agent,
+            Agent = def.Agent ?? template?.Agent,
             Workspace = Path.GetFullPath(workspace),
-            WorkspaceName = def.Workspace is { } name && _catalog.Workspace(name) is not null ? name : null,
+            WorkspaceName = template is null && def.Workspace is { } name && _catalog.Workspace(name) is not null ? name : null,
             Title = $"{def.Id}: {evt.Text ?? evt.EventId}",
             Key = key,
             TriggerId = def.Id,
         });
-    }
-
-    internal static string Render(string template, TriggerDefinition def, TriggerEvent evt)
-    {
-        string result = template
-            .Replace("{event.text}", evt.Text ?? "", StringComparison.Ordinal)
-            .Replace("{event.sender}", evt.Sender ?? "", StringComparison.Ordinal)
-            .Replace("{event.id}", evt.EventId, StringComparison.Ordinal)
-            .Replace("{event.data}", evt.Data.ToJsonString(), StringComparison.Ordinal)
-            .Replace("{date}", DateTimeOffset.Now.ToString("yyyy-MM-dd"), StringComparison.Ordinal);
-        JsonObject? overrides = evt.Data["inputs"] as JsonObject;
-        foreach ((string name, string value) in def.Inputs)
-            result = result.Replace("{inputs." + name + "}", overrides?[name]?.ToString() ?? value, StringComparison.Ordinal);
-        if (overrides is not null)
-            foreach ((string name, JsonNode? value) in overrides)
-                result = result.Replace("{inputs." + name + "}", value?.ToString() ?? "", StringComparison.Ordinal);
-        return result.Trim().Length > 0 ? result : $"Trigger {def.Id} fired.";
     }
 
     private sealed class SourceContext(TriggerEngine engine, TriggerDefinition def, JsonObject settings) : TriggerSourceContext

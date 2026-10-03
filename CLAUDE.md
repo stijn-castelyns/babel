@@ -6,8 +6,8 @@ This is the `harness`: a self-hosted .NET 10 coding agent harness built on Micro
   original; three embedded diagrams did not survive the export and appear as `[embedded content: …]` placeholders).
 - **Where things stand:** `docs/STATUS.md` lists what is built, every deliberate deviation from the design and why, and
   what is not built yet. Keep it current: update it in the same commit as the work.
-- **Next up:** phase 4 continues with run templates (workspace steps, `setup.sh`, `keep`), then output contracts
-  (`submit_output` with schema validation and retries), then output sinks (`reply`, `file`, `webhook`, `run`).
+- **Next up:** phase 4 continues with output contracts (`submit_output` with schema validation and retries), then output
+  sinks (`reply`, `file`, `webhook`, `run`).
 
 ## Build and test
 

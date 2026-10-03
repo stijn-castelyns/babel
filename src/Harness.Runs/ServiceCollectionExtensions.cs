@@ -8,7 +8,9 @@ using Harness.Extensions.Hooks;
 using Harness.Extensions.Mcp;
 using Harness.Extensions.Plugins;
 using Harness.Extensions.Skills;
+using Harness.Runs.Templates;
 using Harness.Sandbox;
+using Harness.Sdk;
 using Harness.Tools;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -52,6 +54,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EventHub>();
         services.AddSingleton<ApprovalBroker>();
         services.AddSingleton<ApprovalStore>();
+        services.AddSingleton<IWorkspaceStep, GitStep>();
+        services.AddSingleton<IWorkspaceStep, CopyStep>();
+        services.AddSingleton<IWorkspaceStep, RunStep>();
+        services.AddSingleton<WorkspaceBuilder>();
         services.AddSingleton<RunOrchestrator>();
         return services;
     }

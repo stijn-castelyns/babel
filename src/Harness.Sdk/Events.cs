@@ -20,6 +20,12 @@ public static class EventTypes
     public const string ApprovalRequested = "APPROVAL_REQUESTED";
     public const string ApprovalResolved = "APPROVAL_RESOLVED";
     public const string Usage = "USAGE";
+    /// <summary>A workspace step of a run template started, finished or failed.</summary>
+    public const string WorkspaceStep = "WORKSPACE_STEP";
+    /// <summary>The agent submitted output through <c>submit_output</c>, or the harness checked it; carries the validation result.</summary>
+    public const string OutputValidated = "OUTPUT_VALIDATED";
+    /// <summary>An output sink delivered (or failed to deliver) the run's result.</summary>
+    public const string OutputDelivered = "OUTPUT_DELIVERED";
 
     /// <summary>Live-only events are streamed but never written to <c>events.jsonl</c>.</summary>
     public static bool IsPersisted(string type) => type != TextMessageContent;

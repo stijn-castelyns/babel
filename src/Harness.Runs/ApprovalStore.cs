@@ -15,10 +15,11 @@ public sealed record ParkedRequest(
     ReplyAddress? ReplyTo,
     bool AllowUnsandboxed,
     double? ApprovalTimeoutSeconds,
-    bool OnApprovalTimeoutApprove)
+    bool OnApprovalTimeoutApprove,
+    Templates.TemplateRun? Template = null)
 {
     public static ParkedRequest From(RunRequest r) => new(r.Interactive, r.TriggerId, r.RunInstructions, r.ReplyTo, r.AllowUnsandboxed,
-        r.ApprovalTimeout?.TotalSeconds, r.OnApprovalTimeoutApprove);
+        r.ApprovalTimeout?.TotalSeconds, r.OnApprovalTimeoutApprove, r.Template);
 
     public RunRequest ToRequest(string sessionId, IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> messages) => new()
     {
@@ -31,6 +32,7 @@ public sealed record ParkedRequest(
         AllowUnsandboxed = AllowUnsandboxed,
         ApprovalTimeout = ApprovalTimeoutSeconds is double s ? TimeSpan.FromSeconds(s) : null,
         OnApprovalTimeoutApprove = OnApprovalTimeoutApprove,
+        Template = Template,
         Resumed = true,
     };
 }

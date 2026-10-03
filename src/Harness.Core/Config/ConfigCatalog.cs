@@ -51,6 +51,32 @@ public sealed class ConfigCatalog(HarnessPaths paths)
         throw new ConfigException($"Sandbox profile '{name}' is not defined in {paths.SandboxesFile}.");
     }
 
+    /// <summary>Run templates: every folder under <c>templates/</c> with a <c>template.yaml</c>.</summary>
+    public IReadOnlyList<RunTemplate> Templates()
+    {
+        if (!Directory.Exists(paths.TemplatesDir)) return [];
+        List<RunTemplate> templates = [];
+        foreach (string dir in Directory.EnumerateDirectories(paths.TemplatesDir).Order(StringComparer.Ordinal))
+            if (TemplateFile(dir) is { } file) templates.Add(LoadTemplateFile(file));
+        return templates;
+    }
+
+    public RunTemplate Template(string name)
+    {
+        if (name.Contains('/') || name.Contains('\\') || name is "." or "..")
+            throw new ConfigException($"Template name '{name}' is not valid.");
+        string dir = Path.Combine(paths.TemplatesDir, name);
+        if (TemplateFile(dir) is { } file) return LoadTemplateFile(file);
+        return Templates().FirstOrDefault(t => t.Name == name)
+            ?? throw new ConfigException($"Run template '{name}' not found in {paths.TemplatesDir}.");
+    }
+
+    private static string? TemplateFile(string dir) =>
+        new[] { "template.yaml", "template.yml" }.Select(f => Path.Combine(dir, f)).FirstOrDefault(File.Exists);
+
+    private RunTemplate LoadTemplateFile(string file) =>
+        Cached(file, p => RunTemplate.Load(Path.GetDirectoryName(p)!), () => throw new ConfigException($"{file} does not exist."));
+
     /// <summary>Resolves a named workspace to its host path, or returns null.</summary>
     public string? Workspace(string name) =>
         Workspaces.TryGetValue(name, out string? path) ? HarnessPaths.ExpandHome(path) : null;
@@ -97,6 +123,21 @@ public sealed class ConfigCatalog(HarnessPaths paths)
                     foreach ((string tool, string policy) in def.Approvals)
                         if (policy is not ("ask" or "allow" or "deny" or "allowlist"))
                             problems.Add($"{file}: approval policy '{policy}' for '{tool}' must be ask, allow, deny or allowlist.");
+                });
+            }
+        }
+        if (Directory.Exists(paths.TemplatesDir))
+        {
+            foreach (string dir in Directory.EnumerateDirectories(paths.TemplatesDir))
+            {
+                if (TemplateFile(dir) is not { } file) continue;
+                Try(() =>
+                {
+                    RunTemplate t = LoadTemplateFile(file);
+                    if (t.Agent is { } agent && Agents().All(a => a.Name != agent))
+                        problems.Add($"{file}: agent '{agent}' is not defined.");
+                    if (t.Sandbox is { } sandbox && sandbox != "none" && !Sandboxes.ContainsKey(sandbox))
+                        problems.Add($"{file}: sandbox profile '{sandbox}' is not defined.");
                 });
             }
         }

@@ -1,6 +1,7 @@
 using Harness.Core;
 using Harness.Core.Agents;
 using Harness.Runs;
+using Harness.Triggers;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -43,12 +44,28 @@ public sealed class TestHome : IAsyncDisposable
     {
         ServiceCollection services = new();
         services.AddHarnessRuntime(Paths);
+        services.AddHarnessTriggers();
         Services = services.BuildServiceProvider();
         Services.GetRequiredService<AgentFactory>().ChatClientOverride = _ => model;
         return Services;
     }
 
     public RunOrchestrator Orchestrator => Services!.GetRequiredService<RunOrchestrator>();
+
+    public TriggerEngine Triggers => Services!.GetRequiredService<TriggerEngine>();
+
+    /// <summary>Writes <c>templates/&lt;name&gt;/</c> from relative path → content pairs.</summary>
+    public string WriteTemplate(string name, params (string Path, string Content)[] files)
+    {
+        string dir = System.IO.Path.Combine(Paths.TemplatesDir, name);
+        foreach ((string path, string content) in files)
+        {
+            string file = System.IO.Path.Combine(dir, path);
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, content);
+        }
+        return dir;
+    }
 
     public async ValueTask DisposeAsync()
     {
