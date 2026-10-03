@@ -231,7 +231,22 @@ anything must come from the daemon's own origin. The passkey relying-party id is
 API listener's host (`127.0.0.1` maps to `localhost`). Recovery is local-socket only: `harness admin users`,
 `reset-password` (random password, unlocks, ends sessions) and `passkeys clear`. Sessions end on their next request after
 a reset (security-stamp validation on every request). Verified with Chromium and a virtual authenticator
-(`tests/e2e/passkey.mjs`); `/` serves a placeholder page until the web app lands.
+(`tests/e2e/passkey.mjs`).
+
+**Web app (phase 5, step 4)**: a dependency-free app in `src/Harness.Server/wwwroot` (ES module with `// @ts-check`, type-
+checked with `tsc --checkJs`), embedded in the binary and served from `/` on the API listener with a strict content security
+policy (scripts, styles and connections from the daemon's origin only, no framing, `nosniff`, `no-referrer`). Screens:
+setup (from the logged `/setup?code=…` link), sign-in (passkey, or password), dashboard (approvals waiting with the full
+command or diff and Approve / Always / Deny, active runs, failures in the last 24 hours, recent runs), run (live transcript
+over SSE with folded tool calls, inline approvals, cancel, output and files), chat (sessions per workspace, new session in
+a named workspace with an agent, live transcript, fork), triggers (enable/disable, next fire, last run, budget, fire with
+text or JSON inputs) and settings (passkeys add/remove, pairing requests approved with chosen scopes, tokens revoked, sign
+out). A `403 step-up required` answer runs a passkey assertion and retries, so approving from a password session just asks
+for the passkey. One firehose stream keeps the approvals badge and lists live. Server text is only ever inserted as text
+nodes (Markdown is rendered into DOM nodes, never parsed as HTML). The manifest (`display: standalone`) and a service worker
+that caches only the app shell (network first) make it installable; API, auth and webhook responses are never cached.
+The owner's browser session can list and revoke tokens and decide pairings after a step-up; minting tokens stays on the
+machine. Checked end to end at phone size with Chromium (`tests/e2e/pwa.mjs`).
 
 ## Phase 5 plan
 
@@ -270,8 +285,9 @@ Built in this order, each step usable on its own; the API listener keeps working
 | SQLite through EF Core | `Microsoft.Data.Sqlite` directly for the index and `auth.db`; EF Core only for Identity | The index is a handful of tables. |
 | Identity migrations applied on start | `EnsureCreated` builds `identity.db` at schema version 3 | No `dotnet-ef` tooling in the build; the first schema change will need migrations and a baseline. |
 | Secrets in the OS credential store | A 0600 `secrets.json` behind `SecretStore` | Keychain, DPAPI and libsecret slot in behind the same class. |
+| The PWA is a small TypeScript app | Plain ES modules with `// @ts-check` and JSDoc types, no bundler | No Node toolchain in the .NET build; `tsc --checkJs` type-checks the same file (see `tests/e2e/README.md`). |
+| Web Push notifications | Not built | VAPID keys and push subscriptions come next; until then the app shows live state only while it is open. |
 | `harness login` stores the token in the OS keychain | A 0600 `credentials.json` behind `Credentials` | Same reason as secrets; one place to add keychain support later. |
-| Pairings approved in the PWA after a passkey step-up | Approved with `harness pair approve` over the local socket | The PWA and passkeys are not built yet; the local socket is the same root of trust. |
 | Triggers reference a run template | Triggers reference a template, or name `agent`, `workspace` and `prompt` directly | The direct form stays for simple runs against an existing folder (a chat assistant in a named workspace) that need no workspace build. |
 | `run:` steps run `setup.sh` from the workspace | A `./name` missing from the workspace runs from the template folder, mounted read-only | Setup scripts work without copying them into the agent's workspace. |
 | `git` steps | Run on the host, not in the sandbox | Clones need network and credentials the sandbox (often `network: none`) does not have; no repository code runs during a clone. |
@@ -293,7 +309,8 @@ Built in this order, each step usable on its own; the API listener keeps working
 ## Not built yet
 
 - The egress proxy for `container` sandboxes.
-- **Phase 5:** ASP.NET Core Identity with passkeys and step-up, device-pairing login, scoped tokens, the PWA, Web Push.
+- **Phase 5:** Web Push (VAPID keys, `POST /api/push/subscriptions`, notifications that open the approval screen); a
+  user-management screen for adding `operator` and `viewer` users (only the owner exists today).
 - **Phase 6:** Signal, WhatsApp and Messenger sources with in-chat approvals.
 - OpenTelemetry exporters (traces are emitted but not exported), JSON Schemas for config files,
   `harness update`, service install on macOS and Windows, the `dotnet new harness-plugin` template and sample plugins,

@@ -143,6 +143,15 @@ public static class HarnessServer
                 await Deny(http, StatusCodes.Status401Unauthorized, "Sign in, or send a bearer token ('harness login' pairs a device).");
                 return;
             }
+            if (required == Auth.AccessPolicy.LocalOrOwner)
+            {
+                if (!caller.Cookie || caller.Role != Auth.Roles.Owner)
+                {
+                    await Deny(http, StatusCodes.Status403Forbidden, "This is only available over the daemon's local socket or to the owner in the web app.");
+                    return;
+                }
+                required = ApiScopes.Admin;   // and so it needs a fresh step-up, checked below
+            }
             if (required == Auth.AccessPolicy.LocalOnly)
             {
                 await Deny(http, StatusCodes.Status403Forbidden, "This is only available over the daemon's local socket.");
@@ -184,8 +193,7 @@ public static class HarnessServer
         ApiEndpoints.Map(app);
         Auth.AuthEndpoints.Map(app);
         Auth.IdentityEndpoints.Map(app);
-        // The web app is not built yet; the page gives the browser an origin for sign-in and passkeys.
-        app.MapGet("/", () => Results.Content("<!doctype html><meta charset=utf-8><title>harness</title><p>harness daemon. The web app is not built yet.</p>", "text/html"));
+        WebApp.Map(app);
         app.Map("/hooks/{**path}", (string path, HttpContext http, TriggerEngine triggers) => triggers.HandleWebhookAsync(path, http));
 
         // Before any hosted service starts: the trigger engine replays queued events, and must see the runs they belonged to as failed.

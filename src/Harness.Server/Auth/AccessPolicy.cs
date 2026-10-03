@@ -13,6 +13,8 @@ namespace Harness.Server.Auth;
 public static class AccessPolicy
 {
     public const string Anonymous = "anonymous", LocalOnly = "local", Authenticated = "authenticated";
+    /// <summary>The local socket, or an owner's browser session after a passkey step-up (the PWA's settings screen).</summary>
+    public const string LocalOrOwner = "local-or-owner";
 
     public static string Required(string method, PathString path)
     {
@@ -24,7 +26,9 @@ public static class AccessPolicy
         if (p is "/api/pair" or "/api/pair/token" && HttpMethods.IsPost(method)) return Anonymous;
         if (p == "/api/whoami") return Authenticated;
         if (p == "/api/tokens/self" && HttpMethods.IsDelete(method)) return Authenticated;   // a device can always log itself out
-        if (p.StartsWith("/api/tokens", StringComparison.Ordinal) || p.StartsWith("/api/pairings", StringComparison.Ordinal)) return LocalOnly;
+        // Minting tokens stays on the machine; listing and revoking them and deciding pairings is also open to the owner's browser.
+        if (p == "/api/tokens" && HttpMethods.IsPost(method)) return LocalOnly;
+        if (p.StartsWith("/api/tokens", StringComparison.Ordinal) || p.StartsWith("/api/pairings", StringComparison.Ordinal)) return LocalOrOwner;
         if (p is "/api/sessions/reindex" or "/api/retention/sweep" or "/api/triggers/reload" || p.StartsWith("/api/sandboxes/", StringComparison.Ordinal))
             return ApiScopes.Admin;
         if (!get && p.StartsWith("/api/runs/", StringComparison.Ordinal) && p.Contains("/approvals/", StringComparison.Ordinal)) return ApiScopes.Approve;

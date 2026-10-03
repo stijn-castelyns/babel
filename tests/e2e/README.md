@@ -15,6 +15,13 @@ passkeys with a real WebAuthn ceremony. Not part of `dotnet test`.
   API listener on `127.0.0.1:PORT`, a fresh `identity.db`, and the setup code from the daemon log or
   `harness admin setup`. Run with `NODE_PATH=/opt/node22/lib/node_modules node passkey.mjs …` where Playwright is global.
 
+- `pwa.mjs BASE SETUPCODE OUTDIR` — the web app at phone size: setup, a passkey, chat with an approval (automatic
+  step-up), dashboard, triggers, settings; screenshots land in OUTDIR. Needs the model profile on `mockllm.py`, a named
+  workspace, and a fresh `identity.db`.
+- Type-check the web app: `cd src/Harness.Server/wwwroot && npx -p typescript@5 tsc --noEmit --allowJs --checkJs
+  --target es2022 --module es2022 --lib es2023,dom,dom.iterable app.js`. The daemon serves the copy embedded at build
+  time, so rebuild before checking a change in the browser.
+
 Typical session:
 
 ```bash

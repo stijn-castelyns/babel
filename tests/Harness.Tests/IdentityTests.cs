@@ -68,7 +68,9 @@ public class IdentityTests
                 Assert.Equal(HttpStatusCode.Forbidden, s);
                 Assert.Contains("step-up required", body);
             }
-            Assert.Equal(HttpStatusCode.Forbidden, (await browser.GetAsync("/api/tokens")).StatusCode);   // local only, whoever asks
+            // Token management in the browser: the owner after a step-up; minting stays on the machine.
+            Assert.Contains("step-up required", await (await browser.GetAsync("/api/tokens")).Content.ReadAsStringAsync());
+            Assert.Contains("local socket", (await Post(browser, "/api/tokens", new { name = "x" }, origin: baseUrl)).Body);
             // A page on another origin cannot use the cookie to change anything.
             Assert.Equal(HttpStatusCode.Forbidden, (await Post(browser, "/api/sessions", new { workspaceName = "ws" }, origin: "http://evil.example")).Status);
             Assert.Equal(HttpStatusCode.Forbidden, (await Post(browser, "/auth/signout", new { }, origin: "http://evil.example")).Status);
@@ -94,6 +96,43 @@ public class IdentityTests
             Assert.Equal(HttpStatusCode.OK, (await attacker.GetAsync("/api/sessions")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await Post(attacker, "/auth/signout", new { })).Status);
             Assert.Equal(HttpStatusCode.Unauthorized, (await attacker.GetAsync("/api/sessions")).StatusCode);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task The_web_app_is_served_from_the_binary_with_a_strict_policy()
+    {
+        await using TestHome home = new();
+        int port = FreePort();
+        string baseUrl = $"http://127.0.0.1:{port}";
+        File.AppendAllText(home.Paths.ConfigFile, $"\nlisteners:\n  api: {baseUrl}\n");
+        await using WebApplication app = HarnessServer.Build(home.Paths);
+        await app.StartAsync();
+        try
+        {
+            using HttpClient anonymous = new() { BaseAddress = new Uri(baseUrl) };
+            foreach ((string path, string type) in new[]
+            {
+                ("/", "text/html"), ("/setup", "text/html"), ("/app.js", "text/javascript"), ("/style.css", "text/css"),
+                ("/sw.js", "text/javascript"), ("/manifest.webmanifest", "application/manifest+json"), ("/icon.svg", "image/svg+xml"),
+            })
+            {
+                using HttpResponseMessage r = await anonymous.GetAsync(path);
+                Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+                Assert.StartsWith(type, r.Content.Headers.ContentType!.ToString());
+                Assert.Contains("script-src 'self'", r.Headers.GetValues("Content-Security-Policy").Single());
+                Assert.Contains("frame-ancestors 'none'", r.Headers.GetValues("Content-Security-Policy").Single());
+                Assert.Equal("nosniff", r.Headers.GetValues("X-Content-Type-Options").Single());
+            }
+            Assert.Contains("\"display\": \"standalone\"", await anonymous.GetStringAsync("/manifest.webmanifest"));
+            Assert.Contains("/api/", await anonymous.GetStringAsync("/sw.js"));   // never caches API responses
+            Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync("/nope.js")).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/sessions")).StatusCode);
+            Assert.Contains("\"setupNeeded\":true", await anonymous.GetStringAsync("/auth/status"));
         }
         finally
         {

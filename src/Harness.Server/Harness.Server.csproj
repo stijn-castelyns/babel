@@ -12,6 +12,10 @@
     <ProjectReference Include="..\Harness.Client\Harness.Client.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The web app ships inside the binary; WebApp serves it from these resources. -->
+    <EmbeddedResource Include="wwwroot\**" LogicalName="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Harness.Tests" />
   </ItemGroup>
 </Project>
