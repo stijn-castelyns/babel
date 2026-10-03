@@ -284,7 +284,7 @@ public static class RunTimeline
             case "APPROVAL_RESOLVED":
                 bool ok = d["approved"]?.GetValue<bool>() == true;
                 return ($"{(ok ? "approved" : "denied")} {S("toolName")} · {S("decidedBy")} via {S("via")}" + (d["reason"] is null ? "" : " · " + S("reason")), ok ? Style.Ok : Style.Error);
-            case "USAGE": return ($"{d["inputTokens"]} in / {d["outputTokens"]} out (run {Format.Tokens(d["runInputTokens"]?.GetValue<long>() ?? 0)} / {Format.Tokens(d["runOutputTokens"]?.GetValue<long>() ?? 0)})", Style.Dim);
+            case "USAGE": return ($"{d["inputTokens"]} in / {d["outputTokens"]} out (run {Format.Tokens(Json.Long(d["runInputTokens"]) ?? 0)} / {Format.Tokens(Json.Long(d["runOutputTokens"]) ?? 0)})", Style.Dim);
             default: return (Format.OneLine(d.ToJsonString(), 200), Style.Dim);
         }
     }

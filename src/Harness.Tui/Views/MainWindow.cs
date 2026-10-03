@@ -104,10 +104,14 @@ internal sealed class MainWindow : Runnable
 
     private bool SidebarVisible => _sidebarShown ?? (App?.Screen.Width ?? 120) >= NarrowWidth;
 
-    private void Layout2()
+    public void Relayout()
     {
         bool sidebar = SidebarVisible;
         _sidebar.Visible = sidebar;
+        // Short terminals keep the session list and drop the runs box (the runs view is a key away: g r).
+        bool runsBox = (App?.Screen.Height ?? 40) >= 20;
+        _runsFrame.Visible = runsBox;
+        _sessionsFrame.Height = runsBox ? Dim.Fill(RunsHeight) : Dim.Fill();
         _main.X = sidebar ? Pos.Right(_sidebar) : 0;
         bool composer = _c.Screen == Screen.Session;
         int rows = composer ? Math.Clamp(_composerRows, 1, 8) : 0;
@@ -125,7 +129,7 @@ internal sealed class MainWindow : Runnable
         _listFilter = "";
         _body.Follow = _c.Screen is Screen.Session or Screen.RunDetail;
         _body.Invalidate();
-        Layout2();
+        Relayout();
         Refresh();
         if (_c.Screen == Screen.RunDetail) _body.MoveBottom();
     }
@@ -275,8 +279,11 @@ internal sealed class MainWindow : Runnable
     {
         switch (r)
         {
-            case Region.Sessions when SidebarVisible: _sessions.SetFocus(); break;
-            case Region.Runs when SidebarVisible: _runs.SetFocus(); break;
+            case Region.Sessions when SidebarVisible:
+                _sessions.SetFocus();
+                EnsureSessionSelected();
+                break;
+            case Region.Runs when SidebarVisible && _runsFrame.Visible: _runs.SetFocus(); break;
             case Region.Composer when _c.Screen == Screen.Session: _composer.SetFocus(); break;
             default: _body.SetFocus(); break;
         }
@@ -286,7 +293,8 @@ internal sealed class MainWindow : Runnable
     private void CycleFocus(int direction)
     {
         List<Region> order = [];
-        if (SidebarVisible) order.AddRange([Region.Sessions, Region.Runs]);
+        if (SidebarVisible) order.Add(Region.Sessions);
+        if (SidebarVisible && _runsFrame.Visible) order.Add(Region.Runs);
         order.Add(Region.Body);
         if (_c.Screen == Screen.Session) order.Add(Region.Composer);
         int at = order.IndexOf(Focus2);
@@ -317,8 +325,6 @@ internal sealed class MainWindow : Runnable
     public bool Dispatch(Key key)
     {
         string name = KeyNames.Of(key);
-        if (Environment.GetEnvironmentVariable("HARNESS_TUI_DEBUG") is { } log)
-            File.AppendAllText(log, $"key {name} focus={Focus2} composerFocus={_composer.HasFocus} mostFocused={App?.TopRunnableView?.MostFocused?.GetType().Name}\n");
         if (_overlay.Visible) return OverlayKey(name);
         if (_filteringSessions) return FilterKey(name);
         if (_completions.Count > 0 && Focus2 == Region.Composer && CompletionKey(name)) return true;
@@ -357,7 +363,7 @@ internal sealed class MainWindow : Runnable
 
     private void RestoreFocus() => FocusRegion(_focusBeforeOverlay);
 
-    private void OpenOverlay(string title, string? prompt, Func<string, IReadOnlyList<OverlayItem>>? filter, Action<string>? accept,
+    private void OpenOverlay(string title, string? prompt, Func<string, int, IReadOnlyList<OverlayItem>>? filter, Action<string>? accept,
         string initial = "", Action<string>? change = null, Action? cancel = null, bool compact = false)
     {
         if (!_overlay.Visible) _focusBeforeOverlay = Focus2;
@@ -379,6 +385,8 @@ internal sealed class MainWindow : Runnable
                 break;
             case "Enter" or "Down" or "Tab":
                 _filteringSessions = false;
+                _sessions.Invalidate();
+                EnsureSessionSelected(force: true);
                 break;
             case "Backspace":
                 if (_sessionFilter.Length > 0) _sessionFilter = _sessionFilter[..^1];
@@ -404,7 +412,7 @@ internal sealed class MainWindow : Runnable
             case Commands.Quit: _c.Quit(); return true;
             case Commands.GoSessions:
                 if (!SidebarVisible) _sidebarShown = true;
-                Layout2();
+                Relayout();
                 FocusRegion(Region.Sessions);
                 if (_c.Screen != Screen.Session) Show(Screen.Session);
                 return true;
@@ -418,7 +426,7 @@ internal sealed class MainWindow : Runnable
             case Commands.FocusPrev: CycleFocus(-1); return true;
             case Commands.ToggleSidebar:
                 _sidebarShown = !SidebarVisible;
-                Layout2();
+                Relayout();
                 if (!SidebarVisible && focus is Region.Sessions or Region.Runs) FocusRegion(Region.Body);
                 return true;
             case Commands.Back: return Back(focus);
@@ -516,6 +524,16 @@ internal sealed class MainWindow : Runnable
                 return true;
         }
         return false;
+    }
+
+    /// <summary>Puts the list cursor on a session (the open one, else the first) when it is on nothing or on a group.</summary>
+    private void EnsureSessionSelected(bool force = false)
+    {
+        string? current = SelectedId(_sessions, _sessionIds);
+        if (!force && current is not null && _c.Store.Session(current) is not null) return;
+        int open = _c.OpenSessionId is { } o ? _sessionIds.IndexOf(o) : -1;
+        int first = open >= 0 ? open : _sessionIds.FindIndex(id => id is not null && _c.Store.Session(id) is not null);
+        if (first >= 0) _sessions.Select(first);
     }
 
     private async Task OpenSession(string id)
@@ -677,7 +695,7 @@ internal sealed class MainWindow : Runnable
         if (rows != _composerRows)
         {
             _composerRows = rows;
-            Layout2();
+            Relayout();
         }
         UpdateMention();
         _hint.SetNeedsDraw();
@@ -845,14 +863,14 @@ internal sealed class MainWindow : Runnable
 
     private void OpenPalette()
     {
-        IReadOnlyList<OverlayItem> Filter(string q)
+        IReadOnlyList<OverlayItem> Filter(string q, int width)
         {
             List<(int Score, OverlayItem Item)> hits = [];
             foreach (CommandInfo info in Commands.All)
             {
                 if (Fuzzy.Score($"{info.Name} {info.Description}", q) is not int score) continue;
                 string keys = string.Join(" · ", _keys.KeysFor(info.Name));
-                LineBuilder b = new(80);
+                LineBuilder b = new(width);
                 b.Row([new Span(info.Description, Style.Normal), new Span("  " + info.Name, Style.Dim)], new Span(keys, Style.Key));
                 string name = info.Name;
                 hits.Add((score, new OverlayItem(b.Lines[0], () => RunFromPalette(name))));
@@ -860,7 +878,7 @@ internal sealed class MainWindow : Runnable
             foreach ((string slash, string help) in ComposerModel.SlashCommands)
                 if (Fuzzy.Score($"{slash} {help}", q) is int score)
                 {
-                    LineBuilder b = new(80);
+                    LineBuilder b = new(width);
                     b.Row([new Span(slash, Style.Accent), new Span("  " + help, Style.Dim)]);
                     string s = slash;
                     hits.Add((score + 5, new OverlayItem(b.Lines[0], () => { Show(Screen.Session); _composer.SetValue(s + " "); })));
@@ -896,7 +914,7 @@ internal sealed class MainWindow : Runnable
             items.Add(new OverlayItem(Line.Empty));
         }
         items.Add(new OverlayItem(Line.Of("Remap any command in ~/.harness/tui.yaml (keys: { command: [\"Ctrl+X\"] }). Esc closes.", Style.Dim)));
-        OpenOverlay("Keys", null, _ => items, null);
+        OpenOverlay("Keys", null, (_, _) => items, null);
     }
 
     // ---- small drawn views ----

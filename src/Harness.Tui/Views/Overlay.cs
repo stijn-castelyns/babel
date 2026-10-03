@@ -32,7 +32,11 @@ internal sealed class Overlay : View
         Visible = false;
         HotKeySpecifier = new System.Text.Rune(0xFFFF);
         _list = new LinesView(theme) { X = 0, Y = 2, Width = Dim.Fill(), Height = Dim.Fill(), RowHighlight = true, CanFocus = false };
-        _list.Source = width => [.. _items.Select((item, i) => item.Line with { Item = item.OnChoose is null && item.Id is null ? -1 : i })];
+        _list.Source = width =>
+        {
+            _items = Filter?.Invoke(Input, width) ?? [];
+            return [.. _items.Select((item, i) => item.Line with { Item = item.OnChoose is null && item.Id is null ? -1 : i })];
+        };
         Add(_list);
     }
 
@@ -40,14 +44,14 @@ internal sealed class Overlay : View
     public string Input { get; private set; } = "";
     public string Prompt { get; private set; } = "";
     /// <summary>Recomputes the list from the input (palette filtering, live filters).</summary>
-    public Func<string, IReadOnlyList<OverlayItem>>? Filter { get; private set; }
+    public Func<string, int, IReadOnlyList<OverlayItem>>? Filter { get; private set; }
     /// <summary>Called with the input when Enter is pressed and the list has no selection to choose.</summary>
     public Action<string>? OnAccept { get; private set; }
     /// <summary>Called on every edit of the input (live filters).</summary>
     public Action<string>? OnChange { get; private set; }
     public Action? OnCancel { get; private set; }
 
-    public void Open(string title, string? prompt, Func<string, IReadOnlyList<OverlayItem>>? filter, Action<string>? onAccept,
+    public void Open(string title, string? prompt, Func<string, int, IReadOnlyList<OverlayItem>>? filter, Action<string>? onAccept,
         string initial = "", Action<string>? onChange = null, Action? onCancel = null, bool compact = false)
     {
         Title = title;
@@ -87,8 +91,8 @@ internal sealed class Overlay : View
 
     private void Refilter()
     {
-        _items = Filter?.Invoke(Input) ?? [];
         _list.Invalidate();
+        _ = _list.Lines;
         int first = _items.ToList().FindIndex(i => i.OnChoose is not null || i.Id is not null);
         if (first >= 0) _list.Select(first);
         SetNeedsDraw();

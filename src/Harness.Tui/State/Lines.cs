@@ -168,6 +168,9 @@ public static class Fuzzy
     public static int? Score(string text, string query)
     {
         if (query.Length == 0) return 0;
+        // A contiguous match beats a scattered one; earlier and at a word start is better.
+        int at = text.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+        if (at >= 0) return Math.Min(at, 40) / (at == 0 || !char.IsLetterOrDigit(text[at - 1]) ? 4 : 1);
         int score = 0, last = -1, qi = 0;
         for (int i = 0; i < text.Length && qi < query.Length; i++)
         {
@@ -176,7 +179,7 @@ public static class Fuzzy
             last = i;
             qi++;
         }
-        return qi == query.Length ? score : null;
+        return qi == query.Length ? 50 + score : null;
     }
 }
 
@@ -184,4 +187,13 @@ public static class Fuzzy
 public static class Osc52
 {
     public static string Sequence(string text) => $"\u001b]52;c;{Convert.ToBase64String(Encoding.UTF8.GetBytes(text))}\u0007";
+}
+
+/// <summary>Reads JSON numbers whether they came off the wire (elements) or were built in memory (int, long, double).</summary>
+public static class Json
+{
+    public static long? Long(System.Text.Json.Nodes.JsonNode? node) =>
+        node is System.Text.Json.Nodes.JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number
+            ? (v.TryGetValue(out long l) ? l : v.TryGetValue(out int i) ? i : v.TryGetValue(out double d) ? (long)d : null)
+            : null;
 }

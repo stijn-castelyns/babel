@@ -75,7 +75,7 @@ internal sealed class LinesView : View
         {
             if (stops.Count > 0 && !stops.Contains(Selected)) Selected = stops.Where(s => s <= Selected).DefaultIfEmpty(stops[0]).Max();
             if (stops.Count == 0) Selected = -1;
-            if (_lines.Count > _lastCount && _lastCount > 0 && _top + Viewport.Height < _lines.Count) NewOutputBelow = true;
+            if (FollowCapable && _lines.Count > _lastCount && _lastCount > 0 && _top + Viewport.Height < _lines.Count) NewOutputBelow = true;
             _top = Math.Clamp(_top, 0, Math.Max(0, _lines.Count - 1));
         }
         _lastCount = _lines.Count;
@@ -190,6 +190,8 @@ internal sealed class LinesView : View
     protected override bool OnDrawingContent(DrawContext? context)
     {
         Ensure();
+        // Layout may have changed the height since the lines were computed; following means the last row is visible.
+        if (Follow) _top = Math.Max(0, _lines.Count - Math.Max(1, Viewport.Height));
         Attribute normal = GetAttributeForRole(VisualRole.Normal);
         int width = Viewport.Width, height = Viewport.Height;
         string blank = new(' ', Math.Max(0, width));

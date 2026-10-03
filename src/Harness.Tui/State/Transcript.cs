@@ -247,7 +247,7 @@ public sealed class TranscriptModel(string sessionId)
                 }
                 break;
             case "USAGE":
-                LastInputTokens = d["inputTokens"]?.GetValue<long>() ?? LastInputTokens;
+                LastInputTokens = Json.Long(d["inputTokens"]) ?? LastInputTokens;
                 return true;
             case "RUN_STATE":
                 if (Str(d, "notice") is { } notice) Items.Add(Notice(e, notice, NoticeLevel.Warning));
@@ -259,9 +259,9 @@ public sealed class TranscriptModel(string sessionId)
             case "RUN_FINISHED":
                 foreach (TranscriptItem open in Items.Where(i => i.RunId == e.RunId && i.Streaming)) open.Streaming = false;
                 TranscriptItem end = new() { Kind = ItemKind.RunEnd, RunId = e.RunId, Seq = e.Seq, State = Str(d, "state") };
-                long input2 = d["inputTokens"]?.GetValue<long>() ?? 0, output = d["outputTokens"]?.GetValue<long>() ?? 0;
+                long input2 = Json.Long(d["inputTokens"]) ?? 0, output = Json.Long(d["outputTokens"]) ?? 0;
                 end.Text.Append($"{Format.Tokens(input2)} in / {Format.Tokens(output)} out");
-                if (d["elapsedMs"]?.GetValue<long>() is long ms) end.Text.Append($" · {Format.Duration(TimeSpan.FromMilliseconds(ms))}");
+                if (Json.Long(d["elapsedMs"]) is long ms) end.Text.Append($" · {Format.Duration(TimeSpan.FromMilliseconds(ms))}");
                 if (end.State != "succeeded" && Str(d, "error") is { } error) end.Reason = error;
                 Items.Add(end);
                 break;

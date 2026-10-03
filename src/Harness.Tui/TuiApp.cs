@@ -41,6 +41,7 @@ public static class TuiApp
                 {
                     if (window.Dispatch(key)) key.Handled = true;
                 };
+                app.ScreenChanged += (_, _) => window.Relayout();
                 // Clocks, "ago" columns and flash messages age once a second.
                 app.AddTimeout(TimeSpan.FromSeconds(1), () =>
                 {

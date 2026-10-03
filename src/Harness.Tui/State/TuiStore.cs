@@ -153,8 +153,8 @@ public sealed class TuiStore
             case "USAGE" when run is not null:
                 _runs[e.RunId] = run with
                 {
-                    InputTokens = d["runInputTokens"]?.GetValue<long>() ?? run.InputTokens,
-                    OutputTokens = d["runOutputTokens"]?.GetValue<long>() ?? run.OutputTokens,
+                    InputTokens = Json.Long(d["runInputTokens"]) ?? run.InputTokens,
+                    OutputTokens = Json.Long(d["runOutputTokens"]) ?? run.OutputTokens,
                 };
                 break;
             case "APPROVAL_REQUESTED":
@@ -173,8 +173,8 @@ public sealed class TuiStore
                 _runs[e.RunId] = run with
                 {
                     State = Str(d, "state") ?? "failed", FinishedAt = e.Ts, Error = Str(d, "error"), ResultText = Str(d, "text"),
-                    InputTokens = d["inputTokens"]?.GetValue<long>() ?? run.InputTokens,
-                    OutputTokens = d["outputTokens"]?.GetValue<long>() ?? run.OutputTokens,
+                    InputTokens = Json.Long(d["inputTokens"]) ?? run.InputTokens,
+                    OutputTokens = Json.Long(d["outputTokens"]) ?? run.OutputTokens,
                     Output = d["output"]?.DeepClone(),
                 };
                 foreach (string id in _approvals.Values.Where(a => a.RunId == e.RunId).Select(a => a.RequestId).ToList()) _approvals.Remove(id);
@@ -182,8 +182,8 @@ public sealed class TuiStore
                     _sessions[e.SessionId] = done with
                     {
                         UpdatedAt = e.Ts,
-                        InputTokens = done.InputTokens + (d["inputTokens"]?.GetValue<long>() ?? 0),
-                        OutputTokens = done.OutputTokens + (d["outputTokens"]?.GetValue<long>() ?? 0),
+                        InputTokens = done.InputTokens + (Json.Long(d["inputTokens"]) ?? 0),
+                        OutputTokens = done.OutputTokens + (Json.Long(d["outputTokens"]) ?? 0),
                     };
                 break;
             default:

@@ -160,15 +160,44 @@ which the next run also sees as `{event.data}`; chains stop after 5 runs). Plugi
 Each delivery emits `OUTPUT_DELIVERED`; when a sink fails, a run with valid output ends `failed` ("Output was valid but
 delivery failed: …") and keeps its output. `GET /api/templates` and `harness templates ls` list the run templates.
 
-**Terminal UI (in progress)**: `Harness.Tui` (Terminal.Gui 2.5.0) is a pure client of the daemon through `Harness.Client`.
-`harness` with no arguments, `harness chat` without a message, `harness runs watch` and `harness runs attach <id>` open it in
-a terminal; piped output, `--plain`, `--json` or `TERM=dumb` keep the line-mode commands. Layout: a sidebar (sessions grouped
-by workspace with a Triggered group, filter and badges; live runs below), the main pane (transcript and composer, or the
-runs, run detail, approvals and triggers views) and a status bar. The transcript streams assistant text, folds tool calls,
-and shows pending approvals as cards answered inline (`a`, `d` with a reason, `A`). State lives in `Harness.Tui.State`
-(keymap, store/reducer, transcript model, renderer, composer logic), which needs no terminal and is unit-tested.
-New API: `PATCH /api/sessions/{id}` (rename, also `harness sessions rename`) and `GET /api/sessions/{id}/files?q=` (`@`
-completion in the session's workspace).
+**Terminal UI**: `Harness.Tui` (Terminal.Gui 2.5.0) is a pure client of the daemon through `Harness.Client`, so it works the
+same over the local socket and `--remote`. `harness` with no arguments, `harness chat` without a message (`--resume`,
+`--continue`, `--agent`, `--model`, `--workspace` apply), `harness runs watch` and `harness runs attach <id>` open it when stdin
+and stdout are a terminal; piped output, `--plain`, `--json` or `TERM`=`dumb`/unset keep the line-mode commands (the screen
+reader path).
+
+- *Layout:* a sidebar (sessions grouped by named workspace or folder, a Triggered group, forks under their parent, `●`
+  running / `!` approval / `✗` failed badges, a `/` filter; live runs below), the main pane, and a status bar (last call's
+  input tokens, session tokens, approvals waiting, flash messages, a pending `g…`). The sidebar collapses below 90 columns
+  (`Ctrl+B` toggles it); the runs box hides below 20 rows. Layout follows terminal resizes.
+- *Views:* session (transcript and composer), runs (live table with a `/` filter), run detail (summary, event timeline with
+  the selected event expanded as a tool-call inspector pairing arguments with the result, then output and files), approvals
+  inbox (oldest first, the selected one showing the full command or diff), triggers (enabled, next fire, last run, budget;
+  `F` fires with text or JSON inputs, `Space` toggles), command palette (`Ctrl+K`, `:`; commands and slash commands with their
+  current keys, fuzzy-matched) and the `?` overlay (bindings of the focused view).
+- *Transcript:* streamed assistant text with light Markdown (headings, fenced and inline code, bullets), tool calls folded to
+  one line (tool, main argument, result header, status) and expandable (`edit` as a coloured diff, `write` as added lines,
+  `shell` as command plus exit line and output tail, others as arguments and result), pending approvals as cards showing
+  exactly what will run, answered with `a` / `d` (optional reason) / `A`. A message cursor (`j`/`k`, `[`/`]`, `gg`/`G`,
+  `/` search with `n`/`N`, `y` copies over OSC 52, `f` forks after the message). Output follows the bottom unless the cursor
+  moved up, then "↓ new output" shows. Older history pages load when scrolling past the top.
+- *Composer:* Enter sends, Alt+Enter adds a line (terminals send it as ESC CR, normalised), Up on an empty composer recalls,
+  `Ctrl+G` hands the terminal to `$VISUAL`/`$EDITOR` and reopens the window with the result, `@` completes paths in the
+  session's workspace (Tab/Enter picks; picked files are listed as references for the `read` tool), `/` slash commands with
+  hints, bracketed pastes over 12 lines or 1,500 characters become `[paste #n: N lines]` chips expanded on send, and messages
+  typed during a turn are queued and sent when it ends. `Ctrl+C` cancels the running turn (and clears the queue); again within
+  two seconds quits. In run detail it cancels the run, again detaches.
+- *Live data:* one firehose subscription (`/api/events`, resumed with `Last-Event-ID` after reconnects, with a refresh of the
+  lists) feeds a store through a reducer; the open session's runs are followed through `/api/runs/{id}/events` (journal
+  replay, then live), applied once per sequence number. Views render from the store; a one-second tick ages clocks.
+- *Keys and themes:* every binding is a named command (`Harness.Tui.State.Commands`); `~/.harness/tui.yaml` takes
+  `theme: dark | light | none` and `keys: { command: key | [keys] }` (unknown settings or commands are errors).
+  `HARNESS_THEME` overrides the theme and `NO_COLOR` forces `none` (bold, faint, underline and reverse only). Mouse clicks
+  select and the wheel scrolls; nothing needs the mouse.
+- *Tests:* the state layer (keymap, store reducer, transcript model and renderer, composer, session tree, run timeline) is
+  tested by replaying recorded event streams; the controller is tested against a real daemon on its socket.
+- *New API:* `PATCH /api/sessions/{id}` (rename; also `harness sessions rename`) and `GET /api/sessions/{id}/files?q=`
+  (`@` completion in the session's workspace, which works for folder sessions too).
 
 ## Deviations from the design
 
@@ -188,12 +217,17 @@ completion in the session's workspace).
 | Parked runs keep their whole `RunRequest` | Everything except `ExtraTools` and the concurrency `Gate` is kept | `submit_output` is rebuilt from the run template on resume; `ExtraTools` is only for programmatic callers. A run resumed after a restart does not count against its trigger's `concurrency:` limits; slots are in-memory. |
 | Delivery failures | A failed sink turns `succeeded` into `failed` | The design leaves it open; valid output that never reached its destination is not a success, and the output stays in `runs/<run-id>/output`. |
 | `reply` sink | Replies through the trigger source instance (`IReplyChannel`) | The source that received the event already holds the channel's credentials; no separate registration is needed. |
+| Composer on `Terminal.Gui.Editor` | Terminal.Gui's own `TextView` (marked obsolete in 2.5) | The Editor package has only prereleases; `TextView` has undo/redo and word wrap. Swapping it is local to `ComposerView`. |
+| Markdig parses assistant Markdown | A small line-based renderer (headings, fences, inline code, bullets) | Enough for a transcript, testable as plain lines, and no styled-text bridge to maintain. |
+| Status bar shows `ctx 38%` | Shows the last model call's input tokens (`ctx 12k`) | The API does not expose the model profile's context window to clients yet. |
+| `/compact`, `/approvals` slash commands | Answer that they are not available | The daemon has no API for on-demand compaction or session approval policy; compaction runs automatically at the start of a turn. |
+| One SSE subscription | The firehose, plus one per-run stream for each active run of the open session | Per-run streams replay the journal, so a transcript opened mid-run shows what happened before the TUI looked; the firehose ring would not. |
+| 16-colour, 256-colour and TrueColor detection | Themes use the 16 named colours | They render the same everywhere; Terminal.Gui handles the terminal's colour depth. |
 | `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
 
 ## Not built yet
 
 - The egress proxy for `container` sandboxes.
-- **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.
 - **Phase 5:** ASP.NET Core Identity with passkeys and step-up, device-pairing login, scoped tokens, the PWA, Web Push.
 - **Phase 6:** Signal, WhatsApp and Messenger sources with in-chat approvals.
 - OpenTelemetry exporters (traces are emitted but not exported), JSON Schemas for config files,

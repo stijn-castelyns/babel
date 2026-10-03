@@ -60,7 +60,7 @@ internal static class Samples
             # Sandbox profiles, referenced by name from agents and triggers.
             workspace:
               type: bubblewrap
-              network: none                     # none | allowlist | full (allowlist is treated as none until the egress proxy lands)
+              network: none                     # none | allowlist (via the egress proxy, with allowHosts) | full
               mounts:
                 - { host: "{workspace}", path: /workspace, mode: rw }
               env: { DOTNET_CLI_TELEMETRY_OPTOUT: "1" }

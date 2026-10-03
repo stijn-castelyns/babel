@@ -6,13 +6,13 @@ This is the `harness`: a self-hosted .NET 10 coding agent harness built on Micro
   original; three embedded diagrams did not survive the export and appear as `[embedded content: …]` placeholders).
 - **Where things stand:** `docs/STATUS.md` lists what is built, every deliberate deviation from the design and why, and
   what is not built yet. Keep it current: update it in the same commit as the work.
-- **Next up:** the terminal UI (Terminal.Gui 2.5); then phase 5 (Identity, passkeys, pairing, the PWA).
+- **Next up:** phase 5 (Identity, passkeys, device pairing, scoped tokens, the PWA).
 
 ## Build and test
 
 ```bash
 dotnet build Harness.slnx
-dotnet test Harness.slnx        # ~60 tests, a few seconds; includes real bubblewrap and real-socket server tests
+dotnet test Harness.slnx        # ~80 tests, a few seconds; includes real bubblewrap and real-socket server tests
 ```
 
 The build treats warnings as errors and uses central package versions (`Directory.Packages.props`).
@@ -45,6 +45,10 @@ calls is enough. Tests use `ScriptedChatClient` through `AgentFactory.ChatClient
 - `pkill -f "harness.dll serve"` also matches the shell running it; find daemon PIDs with `ps` and kill those.
 - Templated runs always get the output contract: scripted test models must call `submit_output` or the run ends
   `invalid_output`.
+- The TUI routes every key through `app.Keyboard.KeyDown` (before the focused widget) into `MainWindow.Dispatch`; a view
+  only takes focus when all its containers have `CanFocus = true`, and `_` in a `Title` is a hotkey marker unless
+  `HotKeySpecifier` is cleared. Drive it end to end in a pty (Python `pty` + `pyte`) against a daemon and a scripted
+  OpenAI-compatible server; in-memory `JsonNode` numbers need `Json.Long`, not `GetValue<long>()`.
 
 ## Conventions
 
