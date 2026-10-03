@@ -18,6 +18,9 @@ public static class AccessPolicy
     {
         string p = path.Value?.TrimEnd('/') ?? "";
         bool get = HttpMethods.IsGet(method) || HttpMethods.IsHead(method);
+        // Browser sign-in checks its own cookie; the web app's files are public.
+        if (p.StartsWith("/auth/", StringComparison.Ordinal) || !p.StartsWith("/api/", StringComparison.Ordinal)) return Anonymous;
+        if (p.StartsWith("/api/admin/", StringComparison.Ordinal)) return LocalOnly;
         if (p is "/api/pair" or "/api/pair/token" && HttpMethods.IsPost(method)) return Anonymous;
         if (p == "/api/whoami") return Authenticated;
         if (p == "/api/tokens/self" && HttpMethods.IsDelete(method)) return Authenticated;   // a device can always log itself out
@@ -27,6 +30,16 @@ public static class AccessPolicy
         if (!get && p.StartsWith("/api/runs/", StringComparison.Ordinal) && p.Contains("/approvals/", StringComparison.Ordinal)) return ApiScopes.Approve;
         return get ? ApiScopes.Read : ApiScopes.Run;
     }
+}
+
+public static class StepUp
+{
+    /// <summary>
+    /// Firing a trigger only needs <c>run</c>, but from a browser session it also needs a recent passkey, as approvals and
+    /// admin calls do (those get it by their scopes).
+    /// </summary>
+    public static bool Required(string method, PathString path) =>
+        HttpMethods.IsPost(method) && path.Value is { } p && p.StartsWith("/api/triggers/", StringComparison.Ordinal) && p.TrimEnd('/').EndsWith("/fire", StringComparison.Ordinal);
 }
 
 /// <summary>A small per-address sliding window for the unauthenticated pairing endpoints.</summary>

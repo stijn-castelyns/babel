@@ -102,3 +102,9 @@ public sealed record PairingDto(string UserCode, string Name, string? Address, D
 public sealed record ApprovePairingRequest(bool Approved = true, IReadOnlyList<string>? Scopes = null, int? ExpiresInDays = null);
 
 public sealed record WhoAmIDto(string Name, IReadOnlyList<string> Scopes, bool Local, string? TokenId);
+
+public sealed record UserSummaryDto(string Name, IReadOnlyList<string> Roles, int Passkeys, bool LockedOut);
+
+public sealed record TemporaryPasswordDto(string UserName, string Password);
+
+public sealed record SetupCodeDto(string Code);

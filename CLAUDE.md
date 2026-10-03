@@ -12,7 +12,7 @@ This is the `harness`: a self-hosted .NET 10 coding agent harness built on Micro
 
 ```bash
 dotnet build Harness.slnx
-dotnet test Harness.slnx        # ~80 tests, a few seconds; includes real bubblewrap and real-socket server tests
+dotnet test Harness.slnx        # ~100 tests, a few seconds; includes real bubblewrap and real-socket server tests
 ```
 
 The build treats warnings as errors and uses central package versions (`Directory.Packages.props`).
@@ -47,8 +47,10 @@ calls is enough. Tests use `ScriptedChatClient` through `AgentFactory.ChatClient
   `invalid_output`.
 - The TUI routes every key through `app.Keyboard.KeyDown` (before the focused widget) into `MainWindow.Dispatch`; a view
   only takes focus when all its containers have `CanFocus = true`, and `_` in a `Title` is a hotkey marker unless
-  `HotKeySpecifier` is cleared. Drive it end to end in a pty (Python `pty` + `pyte`) against a daemon and a scripted
-  OpenAI-compatible server; in-memory `JsonNode` numbers need `Json.Long`, not `GetValue<long>()`.
+  `HotKeySpecifier` is cleared. Drive it end to end in a pty with `tests/e2e/` (pty driver, scripted
+  OpenAI-compatible server, Playwright passkey check); in-memory `JsonNode` numbers need `Json.Long`, not `GetValue<long>()`.
+- Identity rebuilds the cookie principal on every request (security-stamp validation at interval zero, so resets end
+  sessions at once); claims the harness adds at sign-in survive only because `OnRefreshingPrincipal` copies them.
 
 ## Conventions
 

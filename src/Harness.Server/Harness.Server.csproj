@@ -3,6 +3,10 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Harness.Runs\Harness.Runs.csproj" />
     <ProjectReference Include="..\Harness.Triggers\Harness.Triggers.csproj" />
     <ProjectReference Include="..\Harness.Client\Harness.Client.csproj" />

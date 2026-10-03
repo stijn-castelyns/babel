@@ -10,6 +10,12 @@ namespace Harness.Server.Auth;
 /// <summary>Who made an API request and what it may do.</summary>
 public sealed record Caller(string Name, IReadOnlySet<string> Scopes, bool Local, string? TokenId = null)
 {
+    /// <summary>Signed in with the PWA's cookie rather than a token.</summary>
+    public bool Cookie { get; init; }
+    /// <summary>A cookie session asserted a passkey recently enough for approvals, trigger fires and admin calls.</summary>
+    public bool SteppedUp { get; init; }
+    public string? Role { get; init; }
+
     public static readonly Caller Socket = new("local", new HashSet<string>(ApiScopes.All), Local: true);
 
     public bool Has(string scope) => Scopes.Contains(scope);

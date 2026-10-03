@@ -46,6 +46,9 @@ public static class HarnessServer
         builder.Services.AddHarnessRuntime(paths);
         builder.Services.AddHarnessTriggers();
         builder.Services.AddSingleton(sp => new Auth.AuthStore(paths));
+        Uri? apiUri = listeners.Api is { Length: > 0 } a ? new Uri(a) : null;
+        string? publicHost = listeners.PublicHost ?? (apiUri?.Host is "127.0.0.1" or "::1" ? "localhost" : apiUri?.Host);
+        Auth.IdentitySetup.AddHarnessIdentity(builder.Services, paths, publicHost, secureCookies: apiUri?.Scheme == "https");
         builder.Services.AddHostedService(sp => sp.GetRequiredService<TriggerEngine>());
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Retention>());
         configure?.Invoke(builder.Services);
@@ -79,7 +82,11 @@ public static class HarnessServer
         string? apiToken = secrets.Resolve(listeners.ApiToken);
 
         Auth.AuthStore auth = app.Services.GetRequiredService<Auth.AuthStore>();
-        Auth.AddressLimiter pairStarts = new(10, TimeSpan.FromMinutes(10)), pairPolls = new(120, TimeSpan.FromMinutes(1));
+        Auth.AddressLimiter pairStarts = new(10, TimeSpan.FromMinutes(10)), pairPolls = new(120, TimeSpan.FromMinutes(1)),
+            signIns = new(20, TimeSpan.FromMinutes(10));
+        string? setupCode = Auth.IdentitySetup.InitialiseAsync(app.Services).GetAwaiter().GetResult();
+
+        app.UseAuthentication();
 
         // Listener separation, authentication and per-route scopes.
         app.Use(async (http, next) =>
@@ -103,12 +110,20 @@ public static class HarnessServer
                 return;
             }
             string required = Auth.AccessPolicy.Required(http.Request.Method, http.Request.Path);
+            string path = http.Request.Path.Value ?? "";
             if (required == Auth.AccessPolicy.Anonymous)
             {
-                Auth.AddressLimiter limiter = http.Request.Path.Value!.EndsWith("/token", StringComparison.Ordinal) ? pairPolls : pairStarts;
-                if (!limiter.Allow(http.Connection.RemoteIpAddress))
+                Auth.AddressLimiter? limiter = path.StartsWith("/api/pair/token", StringComparison.Ordinal) ? pairPolls
+                    : path.StartsWith("/api/pair", StringComparison.Ordinal) ? pairStarts
+                    : path is "/auth/password" or "/auth/setup" or "/auth/passkey/signin" ? signIns : null;
+                if (limiter?.Allow(http.Connection.RemoteIpAddress) == false)
                 {
-                    await Deny(http, StatusCodes.Status429TooManyRequests, "Too many pairing requests; try again later.");
+                    await Deny(http, StatusCodes.Status429TooManyRequests, "Too many requests; try again later.");
+                    return;
+                }
+                if (path.StartsWith("/auth/", StringComparison.Ordinal) && !SameOrigin(http))
+                {
+                    await Deny(http, StatusCodes.Status403Forbidden, "Cross-origin request refused.");
                     return;
                 }
                 await next();
@@ -116,10 +131,16 @@ public static class HarnessServer
             }
             Auth.Caller? caller = TokenMatches(http, apiToken)
                 ? new Auth.Caller("api-token", new HashSet<string>(ApiScopes.All), Local: false)
-                : Bearer(http) is { } bearer ? auth.Validate(bearer) : null;
+                : Bearer(http) is { } bearer ? auth.Validate(bearer)
+                : Auth.IdentitySetup.CookieCaller(http.User, DateTimeOffset.UtcNow);
+            if (caller is { Cookie: true } && !SameOrigin(http))
+            {
+                await Deny(http, StatusCodes.Status403Forbidden, "Cross-origin request refused.");
+                return;
+            }
             if (caller is null)
             {
-                await Deny(http, StatusCodes.Status401Unauthorized, "A valid bearer token is required ('harness login' pairs this device).");
+                await Deny(http, StatusCodes.Status401Unauthorized, "Sign in, or send a bearer token ('harness login' pairs a device).");
                 return;
             }
             if (required == Auth.AccessPolicy.LocalOnly)
@@ -127,9 +148,17 @@ public static class HarnessServer
                 await Deny(http, StatusCodes.Status403Forbidden, "This is only available over the daemon's local socket.");
                 return;
             }
+            bool stepUpMissing = caller.Cookie && !caller.SteppedUp
+                && ((required is ApiScopes.Approve or ApiScopes.Admin && caller.Role is { } role && Auth.Roles.Scopes(role).Contains(required))
+                    || Auth.StepUp.Required(http.Request.Method, http.Request.Path));
+            if (stepUpMissing)
+            {
+                await Deny(http, StatusCodes.Status403Forbidden, "step-up required: sign in with your passkey again");
+                return;
+            }
             if (required != Auth.AccessPolicy.Authenticated && !caller.Has(required))
             {
-                await Deny(http, StatusCodes.Status403Forbidden, $"This token lacks the '{required}' scope.");
+                await Deny(http, StatusCodes.Status403Forbidden, caller.Cookie ? $"Your role cannot do this ('{required}')." : $"This token lacks the '{required}' scope.");
                 return;
             }
             http.Items[Auth.Callers.Key] = caller;
@@ -154,6 +183,9 @@ public static class HarnessServer
 
         ApiEndpoints.Map(app);
         Auth.AuthEndpoints.Map(app);
+        Auth.IdentityEndpoints.Map(app);
+        // The web app is not built yet; the page gives the browser an origin for sign-in and passkeys.
+        app.MapGet("/", () => Results.Content("<!doctype html><meta charset=utf-8><title>harness</title><p>harness daemon. The web app is not built yet.</p>", "text/html"));
         app.Map("/hooks/{**path}", (string path, HttpContext http, TriggerEngine triggers) => triggers.HandleWebhookAsync(path, http));
 
         // Before any hosted service starts: the trigger engine replays queued events, and must see the runs they belonged to as failed.
@@ -168,6 +200,9 @@ public static class HarnessServer
             if (failed > 0) log.LogWarning("{Count} run(s) were active when the daemon last stopped and are now marked failed", failed);
             int parked = app.Services.GetRequiredService<RunOrchestrator>().RehydrateParkedRuns();
             if (parked > 0) log.LogInformation("{Count} run(s) are still waiting for approval from before the restart", parked);
+            if (setupCode is not null && listeners.Api is not null)
+                log.LogWarning("No user yet. Create the owner at {Url}setup?code={Code} (or get a new code with 'harness admin setup')",
+                    listeners.Api.EndsWith('/') ? listeners.Api : listeners.Api + "/", setupCode);
             if (listeners.Api is not null && auth.Tokens().All(t => t.RevokedAt is not null) && apiToken is null)
                 log.LogInformation("The API listener accepts scoped tokens; pair a device with 'harness login {Api}' and approve it with 'harness pair approve'", listeners.Api);
         });
@@ -186,6 +221,21 @@ public static class HarnessServer
     private static bool TokenMatches(HttpContext http, string? expected) =>
         expected is not null && Bearer(http) is { } given
         && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(given), Encoding.UTF8.GetBytes(expected));
+
+    /// <summary>
+    /// Browser requests that change something must come from the daemon's own pages. SameSite=Strict cookies already stop
+    /// most cross-site requests; this also stops a same-site but different-origin page. Requests without an Origin header
+    /// (GETs, non-browser clients) pass.
+    /// </summary>
+    private static bool SameOrigin(HttpContext http)
+    {
+        if (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsHead(http.Request.Method)) return true;
+        string? origin = http.Request.Headers.Origin.FirstOrDefault();
+        if (origin is null) return true;
+        return Uri.TryCreate(origin, UriKind.Absolute, out Uri? o)
+            && string.Equals(o.Authority, http.Request.Host.Value, StringComparison.OrdinalIgnoreCase)
+            && o.Scheme == http.Request.Scheme;
+    }
 
     private static Task Deny(HttpContext http, int status, string message)
     {

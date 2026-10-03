@@ -12,6 +12,7 @@ internal static class AuthCommands
         yield return Logout();
         yield return Tokens();
         yield return Pair();
+        yield return AdminCommands.Create();
     }
 
     private static Command Login()
@@ -166,5 +167,59 @@ internal static class AuthCommands
         }));
         pair.Subcommands.Add(deny);
         return pair;
+    }
+}
+
+/// <summary><c>harness admin</c>: account recovery for the web app, over the local socket only.</summary>
+internal static class AdminCommands
+{
+    public static Command Create()
+    {
+        Command admin = new("admin", "Web app accounts: list users, reset a password, clear passkeys, new setup code (local socket only).");
+
+        Command users = new("users", "List users.");
+        users.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            IReadOnlyList<UserSummaryDto> rows = await c.UsersAsync(ct);
+            if (p.GetValue(CliContext.Json)) { Output.Json(rows); return 0; }
+            Output.Table(p, ["USER", "ROLES", "PASSKEYS", "LOCKED OUT"], rows.Select(u => new[] { u.Name, string.Join(',', u.Roles), u.Passkeys.ToString(), u.LockedOut ? "yes" : "no" }));
+            return 0;
+        }));
+        admin.Subcommands.Add(users);
+
+        Argument<string> user = new("user") { Description = "User name" };
+        Command reset = new("reset-password", "Set a new random password, unlock the user and sign out their sessions.") { user };
+        reset.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            TemporaryPasswordDto r = await c.ResetPasswordAsync(p.GetValue(user)!, ct);
+            Console.Error.WriteLine($"New password for {r.UserName} (shown once; change it after signing in):");
+            Console.WriteLine(r.Password);
+            return 0;
+        }));
+        admin.Subcommands.Add(reset);
+
+        Command passkeys = new("passkeys", "Manage a user's passkeys.");
+        Command clear = new("clear", "Remove all of a user's passkeys and sign out their sessions.") { user };
+        clear.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            await c.ClearPasskeysAsync(p.GetValue(user)!, ct);
+            Console.WriteLine("passkeys cleared; sign in with the password and register a new one");
+            return 0;
+        }));
+        passkeys.Subcommands.Add(clear);
+        admin.Subcommands.Add(passkeys);
+
+        Command setup = new("setup", "Print a new one-time setup code (only while no user exists).");
+        setup.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            Console.WriteLine((await c.NewSetupCodeAsync(ct)).Code);
+            return 0;
+        }));
+        admin.Subcommands.Add(setup);
+        return admin;
     }
 }

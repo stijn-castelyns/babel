@@ -217,6 +217,22 @@ code gets nothing and no usable secret is stored. Pairings expire after 10 minut
 `harness logout` revokes it on the daemon and forgets it. The TUI over `--remote` starts new sessions in the daemon's
 first named workspace.
 
+**Identity, passkeys and step-up (phase 5, step 3)**: ASP.NET Core Identity on EF Core SQLite in a 0600 `identity.db`,
+schema version 3, roles `owner` (all scopes), `operator` (read, run, approve) and `viewer` (read). On first start with an
+API listener the daemon logs a one-time setup URL (`harness admin setup` prints a new code while no user exists);
+`POST /auth/setup` with it creates the owner and closes setup. Browser sessions use a `harness` cookie (`HttpOnly`,
+`SameSite=Strict`, `Secure` on https, 14-day sliding expiry) from `/auth/password` (lockout after 5 failures for 15
+minutes, plus 20 sign-in attempts per 10 minutes per address) or `/auth/passkey/request-options` + `/auth/passkey/signin`
+(discoverable credentials, user verification required). A passkey assertion stamps the session's step-up time; for 10
+minutes after it the session gets its role's `approve` and `admin` scopes and may fire triggers, otherwise those answer
+`403 step-up required`. Asserting again while signed in is the step-up (it must be the same user's passkey). The first
+passkey can be added from a password session; further ones, and removing one, need a step-up. Cookie requests that change
+anything must come from the daemon's own origin. The passkey relying-party id is `listeners.publicHost`, defaulting to the
+API listener's host (`127.0.0.1` maps to `localhost`). Recovery is local-socket only: `harness admin users`,
+`reset-password` (random password, unlocks, ends sessions) and `passkeys clear`. Sessions end on their next request after
+a reset (security-stamp validation on every request). Verified with Chromium and a virtual authenticator
+(`tests/e2e/passkey.mjs`); `/` serves a placeholder page until the web app lands.
+
 ## Phase 5 plan
 
 Built in this order, each step usable on its own; the API listener keeps working throughout.
@@ -251,7 +267,8 @@ Built in this order, each step usable on its own; the API listener keeps working
 | --- | --- | --- |
 | `Harness.Sdk` references only the two abstractions packages | It also references `Microsoft.Agents.AI` and the ASP.NET Core shared framework | `AgentSkill` (for `AddSkill`) lives in `Microsoft.Agents.AI`; `MapWebhook` hands out `HttpContext`. Both are shared from the host, so types still match across the plugin boundary. |
 | `chat.AsBuilder().UseAIContextProviders(new CompactionProvider(...))` | `CompactingChatClient` runs the same strategies through `CompactionProvider.CompactAsync` | With the provider registered on the chat client, Agent Framework 1.23 stops passing request messages to the `ChatHistoryProvider` whenever a tool runs, so user messages were lost from history. Covered by `RunOrchestratorTests`. |
-| SQLite through EF Core | `Microsoft.Data.Sqlite` directly | The index is a handful of tables; EF Core arrives with ASP.NET Core Identity in phase 5. |
+| SQLite through EF Core | `Microsoft.Data.Sqlite` directly for the index and `auth.db`; EF Core only for Identity | The index is a handful of tables. |
+| Identity migrations applied on start | `EnsureCreated` builds `identity.db` at schema version 3 | No `dotnet-ef` tooling in the build; the first schema change will need migrations and a baseline. |
 | Secrets in the OS credential store | A 0600 `secrets.json` behind `SecretStore` | Keychain, DPAPI and libsecret slot in behind the same class. |
 | `harness login` stores the token in the OS keychain | A 0600 `credentials.json` behind `Credentials` | Same reason as secrets; one place to add keychain support later. |
 | Pairings approved in the PWA after a passkey step-up | Approved with `harness pair approve` over the local socket | The PWA and passkeys are not built yet; the local socket is the same root of trust. |

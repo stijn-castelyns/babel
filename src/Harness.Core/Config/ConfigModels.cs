@@ -81,8 +81,13 @@ public sealed class ListenersConfig
     public string? Api { get; set; }
     /// <summary>Webhook listener, for example <c>http://127.0.0.1:7444</c>. Unset disables it.</summary>
     public string? Webhooks { get; set; }
-    /// <summary>Bearer token accepted on the API listener until passkey auth lands (a <c>secret:</c> or <c>env:</c> reference).</summary>
+    /// <summary>A legacy all-scopes bearer token for the API listener (a <c>secret:</c> or <c>env:</c> reference); prefer scoped tokens.</summary>
     public string? ApiToken { get; set; }
+    /// <summary>
+    /// The stable host name the web app is reached at, for example <c>box.tailnet.ts.net</c>. It is the passkey relying-party
+    /// id, so it must not change once passkeys are registered. Defaults to the API listener's host.
+    /// </summary>
+    public string? PublicHost { get; set; }
     /// <summary>PFX certificate for an <c>https://</c> API listener.</summary>
     public string? ApiCertificate { get; set; }
     /// <summary>Password of <see cref="ApiCertificate"/> (a <c>secret:</c> or <c>env:</c> reference).</summary>

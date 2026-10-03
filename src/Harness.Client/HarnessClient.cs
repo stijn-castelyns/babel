@@ -173,6 +173,18 @@ public sealed class HarnessClient : IDisposable
     public async Task DecidePairingAsync(string userCode, ApprovePairingRequest decision, CancellationToken ct = default) =>
         await EnsureAsync(await _http.PostAsJsonAsync($"api/pairings/{Uri.EscapeDataString(userCode)}", decision, Json, ct), ct);
 
+    // ---- users (local socket) ----
+
+    public Task<IReadOnlyList<UserSummaryDto>> UsersAsync(CancellationToken ct = default) => GetAsync<IReadOnlyList<UserSummaryDto>>("api/admin/users", ct);
+
+    public Task<TemporaryPasswordDto> ResetPasswordAsync(string user, CancellationToken ct = default) =>
+        PostAsync<TemporaryPasswordDto>($"api/admin/users/{Uri.EscapeDataString(user)}/reset-password", new { }, ct);
+
+    public async Task ClearPasskeysAsync(string user, CancellationToken ct = default) =>
+        await EnsureAsync(await _http.PostAsJsonAsync($"api/admin/users/{Uri.EscapeDataString(user)}/clear-passkeys", new { }, Json, ct), ct);
+
+    public Task<SetupCodeDto> NewSetupCodeAsync(CancellationToken ct = default) => PostAsync<SetupCodeDto>("api/admin/setup", new { }, ct);
+
     // ---- plumbing ----
 
     private async IAsyncEnumerable<EventDto> StreamAsync(string path, long? afterSeq, [EnumeratorCancellation] CancellationToken ct)
