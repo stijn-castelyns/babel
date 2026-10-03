@@ -51,6 +51,8 @@ public sealed class AuthStore
                 user_code TEXT PRIMARY KEY, device_hash TEXT NOT NULL UNIQUE, name TEXT NOT NULL, address TEXT,
                 created_at TEXT NOT NULL, expires_at TEXT NOT NULL, status TEXT NOT NULL, scopes TEXT, token_days INTEGER,
                 token_id TEXT);
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, owner TEXT, created_at TEXT NOT NULL);
             """);
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
@@ -246,5 +248,36 @@ public sealed class AuthStore
         CreatedTokenDto token = CreateToken(name, granted, days, origin: $"pairing {code}");
         Exec(c, "UPDATE pairings SET token_id = $id WHERE user_code = $code", ("$id", token.Info.Id), ("$code", code));
         return new PairPollResponse("approved", token.Token, granted);
+    }
+
+    // ---- Web Push subscriptions ----
+
+    public void AddPushSubscription(Push.PushSubscription s, string owner)
+    {
+        if (!Uri.TryCreate(s.Endpoint, UriKind.Absolute, out Uri? uri) || uri.Scheme != "https")
+            throw new ArgumentException("A push endpoint must be an https URL.");
+        using SqliteConnection c = Open();
+        Exec(c, "INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, owner, created_at) VALUES ($e, $p, $a, $o, $t)",
+            ("$e", s.Endpoint), ("$p", s.P256dh), ("$a", s.Auth), ("$o", owner), ("$t", Iso(Now)));
+    }
+
+    public bool RemovePushSubscription(string endpoint)
+    {
+        using SqliteConnection c = Open();
+        using SqliteCommand cmd = c.CreateCommand();
+        cmd.CommandText = "DELETE FROM push_subscriptions WHERE endpoint = $e";
+        cmd.Parameters.AddWithValue("$e", endpoint);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    public IReadOnlyList<Push.PushSubscription> PushSubscriptions()
+    {
+        using SqliteConnection c = Open();
+        using SqliteCommand cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT endpoint, p256dh, auth FROM push_subscriptions ORDER BY created_at";
+        using SqliteDataReader r = cmd.ExecuteReader();
+        List<Push.PushSubscription> list = [];
+        while (r.Read()) list.Add(new Push.PushSubscription(r.GetString(0), r.GetString(1), r.GetString(2)));
+        return list;
     }
 }

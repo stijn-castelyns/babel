@@ -248,6 +248,18 @@ that caches only the app shell (network first) make it installable; API, auth an
 The owner's browser session can list and revoke tokens and decide pairings after a step-up; minting tokens stays on the
 machine. Checked end to end at phone size with Chromium (`tests/e2e/pwa.mjs`).
 
+**Web Push (phase 5, step 4)**: the VAPID key pair (P-256) is generated on first start and kept in the secret store;
+`GET /api/push/key` hands out the public key, `POST /api/push/subscriptions` stores a browser's subscription (https
+endpoints only) in `auth.db`, `POST /api/push/unsubscribe` and `POST /api/push/test` round it out (all `read`, so viewers
+can subscribe). Payloads are encrypted per RFC 8291 (`aes128gcm`) and requests signed per RFC 8292 (ES256 JWT, 12-hour
+expiry, `sub` is `https://<publicHost>`), using only .NET's crypto; the encryption is pinned to a vector produced by Node's
+`http_ece`. A `PushNotifier` on the event hub sends "Approval needed: <tool>" (urgent) for an approval still waiting two
+seconds after it was requested (so policy and hook decisions never notify) and "<trigger>: <state>" when a triggered run
+finishes; subscriptions answered with 404/410 are dropped. The service worker shows the notification and a tap opens the
+run in the app, where approving still needs the passkey step-up. Settings has enable, test and disable. Verified: delivery
+and decryption in tests, the service worker's notification through CDP (`tests/e2e/push.mjs`, full Chromium); a real
+subscription needs a browser with a push service, which the sandbox's Chromium lacks.
+
 ## Phase 5 plan
 
 Built in this order, each step usable on its own; the API listener keeps working throughout.
@@ -286,7 +298,7 @@ Built in this order, each step usable on its own; the API listener keeps working
 | Identity migrations applied on start | `EnsureCreated` builds `identity.db` at schema version 3 | No `dotnet-ef` tooling in the build; the first schema change will need migrations and a baseline. |
 | Secrets in the OS credential store | A 0600 `secrets.json` behind `SecretStore` | Keychain, DPAPI and libsecret slot in behind the same class. |
 | The PWA is a small TypeScript app | Plain ES modules with `// @ts-check` and JSDoc types, no bundler | No Node toolchain in the .NET build; `tsc --checkJs` type-checks the same file (see `tests/e2e/README.md`). |
-| Web Push notifications | Not built | VAPID keys and push subscriptions come next; until then the app shows live state only while it is open. |
+| Notify when a run finishes | Only triggered runs notify on finishing | Interactive runs are watched by whoever started them; a notification for every chat turn would be noise. |
 | `harness login` stores the token in the OS keychain | A 0600 `credentials.json` behind `Credentials` | Same reason as secrets; one place to add keychain support later. |
 | Triggers reference a run template | Triggers reference a template, or name `agent`, `workspace` and `prompt` directly | The direct form stays for simple runs against an existing folder (a chat assistant in a named workspace) that need no workspace build. |
 | `run:` steps run `setup.sh` from the workspace | A `./name` missing from the workspace runs from the template folder, mounted read-only | Setup scripts work without copying them into the agent's workspace. |
@@ -309,8 +321,8 @@ Built in this order, each step usable on its own; the API listener keeps working
 ## Not built yet
 
 - The egress proxy for `container` sandboxes.
-- **Phase 5:** Web Push (VAPID keys, `POST /api/push/subscriptions`, notifications that open the approval screen); a
-  user-management screen for adding `operator` and `viewer` users (only the owner exists today).
+- **Phase 5 leftovers:** managing `operator` and `viewer` users (only the owner is created today; roles and their scopes
+  are enforced), and Identity migrations once the schema changes.
 - **Phase 6:** Signal, WhatsApp and Messenger sources with in-chat approvals.
 - OpenTelemetry exporters (traces are emitted but not exported), JSON Schemas for config files,
   `harness update`, service install on macOS and Windows, the `dotnet new harness-plugin` template and sample plugins,

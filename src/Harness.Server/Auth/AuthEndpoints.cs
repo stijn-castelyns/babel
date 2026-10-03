@@ -6,6 +6,11 @@ using Microsoft.AspNetCore.Routing;
 namespace Harness.Server.Auth;
 
 /// <summary>Scoped tokens and device pairing. Who may call what is decided by <see cref="AccessPolicy"/> before these run.</summary>
+/// <summary>The JSON a browser's <c>PushSubscription.toJSON()</c> produces.</summary>
+public sealed record PushSubscriptionRequest(string Endpoint, PushKeys Keys);
+public sealed record PushKeys(string P256dh, string Auth);
+public sealed record PushUnsubscribeRequest(string Endpoint);
+
 internal static class AuthEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
@@ -30,6 +35,22 @@ internal static class AuthEndpoints
 
         api.MapDelete("/tokens/{id}", (string id, AuthStore store) =>
             store.Revoke(id) ? Results.NoContent() : Results.NotFound(new ErrorDto($"No active token '{id}'.")));
+
+        // ---- Web Push ----
+
+        api.MapGet("/push/key", (Push.VapidKeys keys) => new { publicKey = keys.PublicKey });
+
+        api.MapPost("/push/subscriptions", (PushSubscriptionRequest body, HttpContext http, AuthStore store) =>
+        {
+            store.AddPushSubscription(new Push.PushSubscription(body.Endpoint, body.Keys.P256dh, body.Keys.Auth), http.Caller().Name);
+            return Results.Created("/api/push/subscriptions", null);
+        });
+
+        api.MapPost("/push/unsubscribe", (PushUnsubscribeRequest body, AuthStore store) =>
+            store.RemovePushSubscription(body.Endpoint) ? Results.NoContent() : Results.NotFound(new ErrorDto("No such subscription.")));
+
+        api.MapPost("/push/test", async (Push.PushSender sender, CancellationToken ct) =>
+            Results.Ok(new { delivered = await sender.SendAsync(new { title = "harness", body = "Notifications work.", url = "/#/settings" }, false, ct) }));
 
         // ---- device pairing ----
 

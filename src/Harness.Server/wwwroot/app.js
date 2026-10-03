@@ -148,6 +148,27 @@ async function passkeyRegister(name) {
   me = await api('/auth/status');
 }
 
+// ---- notifications ----
+
+/** Subscribes this device to Web Push and registers the subscription with the daemon. */
+async function enableNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error('This browser cannot receive push notifications (on iOS, add the app to the home screen first).');
+  if (await Notification.requestPermission() !== 'granted') throw new Error('Notifications are blocked for this site.');
+  const registration = await navigator.serviceWorker.ready;
+  const { publicKey } = await api('/api/push/key');
+  const key = Uint8Array.from(atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+  const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  await api('/api/push/subscriptions', { body: subscription.toJSON() });
+}
+
+async function disableNotifications() {
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return;
+  await api('/api/push/unsubscribe', { body: { endpoint: subscription.endpoint } }).catch(() => undefined);
+  await subscription.unsubscribe();
+}
+
 // ---- live updates ----
 
 /** Keeps the approvals badge current and lets the open screen refresh when runs change anywhere. */
@@ -508,6 +529,12 @@ async function renderSettings() {
       `${p.name ?? 'passkey'} · added ${ago(p.createdAt)} `,
       h('button', { class: 'danger', onclick: () => attempt(async () => { if (confirm('Remove this passkey?')) { await api(`/auth/passkeys/${encodeURIComponent(p.id)}`, { method: 'DELETE' }); renderSettings(); } }) }, 'Remove')))),
     h('button', { onclick: () => attempt(async () => { await passkeyRegister(prompt('Name for this passkey', 'phone') ?? 'passkey'); toast('Passkey added'); renderSettings(); }) }, 'Add a passkey'),
+    h('h2', null, 'Notifications'),
+    h('p', { class: 'muted' }, 'Get a notification when an approval is waiting or a triggered run finishes. It opens the app; approving still asks for your passkey.'),
+    h('div', { class: 'row' },
+      h('button', { onclick: () => attempt(async () => { await enableNotifications(); toast('Notifications on for this device'); }) }, 'Enable on this device'),
+      h('button', { onclick: () => attempt(async () => { const r = await api('/api/push/test', { body: {} }); toast(`Test sent to ${r.delivered} device(s)`); }) }, 'Send a test'),
+      h('button', { onclick: () => attempt(async () => { await disableNotifications(); toast('Notifications off for this device'); }) }, 'Disable')),
     h('h2', null, 'Devices'), devices,
     h('h2', null, 'Session'),
     h('button', { onclick: () => attempt(async () => { await api('/auth/signout', { body: {} }); me = null; firehose?.close(); firehose = null; location.hash = '#/login'; route(); }) }, 'Sign out'));

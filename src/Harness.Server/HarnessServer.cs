@@ -49,6 +49,12 @@ public static class HarnessServer
         Uri? apiUri = listeners.Api is { Length: > 0 } a ? new Uri(a) : null;
         string? publicHost = listeners.PublicHost ?? (apiUri?.Host is "127.0.0.1" or "::1" ? "localhost" : apiUri?.Host);
         Auth.IdentitySetup.AddHarnessIdentity(builder.Services, paths, publicHost, secureCookies: apiUri?.Scheme == "https");
+        builder.Services.AddSingleton(new Push.VapidKeys(secrets));
+        // VAPID asks for a contact; the app's own address is the natural one.
+        string pushSubject = publicHost is null or "localhost" ? "mailto:harness@localhost" : $"https://{publicHost}";
+        builder.Services.AddSingleton(sp => new Push.PushSender(sp.GetRequiredService<Auth.AuthStore>(), sp.GetRequiredService<Push.VapidKeys>(),
+            new HttpClient { Timeout = TimeSpan.FromSeconds(15) }, pushSubject, sp.GetRequiredService<ILogger<Push.PushSender>>()));
+        builder.Services.AddHostedService<Push.PushNotifier>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<TriggerEngine>());
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Retention>());
         configure?.Invoke(builder.Services);

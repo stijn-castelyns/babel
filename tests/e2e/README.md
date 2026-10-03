@@ -18,6 +18,9 @@ passkeys with a real WebAuthn ceremony. Not part of `dotnet test`.
 - `pwa.mjs BASE SETUPCODE OUTDIR` — the web app at phone size: setup, a passkey, chat with an approval (automatic
   step-up), dashboard, triggers, settings; screenshots land in OUTDIR. Needs the model profile on `mockllm.py`, a named
   workspace, and a fresh `identity.db`.
+- `push.mjs BASE USER PASSWORD` — the service worker's push handling: delivers a message through CDP and reads back the
+  notification (full Chromium via `channel: 'chromium'`; the headless shell has no notifications). It also tries a real
+  subscription, which fails without a browser push service.
 - Type-check the web app: `cd src/Harness.Server/wwwroot && npx -p typescript@5 tsc --noEmit --allowJs --checkJs
   --target es2022 --module es2022 --lib es2023,dom,dom.iterable app.js`. The daemon serves the copy embedded at build
   time, so rebuild before checking a change in the browser.

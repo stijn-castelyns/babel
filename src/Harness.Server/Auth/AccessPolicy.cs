@@ -25,6 +25,8 @@ public static class AccessPolicy
         if (p.StartsWith("/api/admin/", StringComparison.Ordinal)) return LocalOnly;
         if (p is "/api/pair" or "/api/pair/token" && HttpMethods.IsPost(method)) return Anonymous;
         if (p == "/api/whoami") return Authenticated;
+        // Subscribing a device to notifications changes nothing on the daemon; viewers may do it.
+        if (p.StartsWith("/api/push/", StringComparison.Ordinal)) return ApiScopes.Read;
         if (p == "/api/tokens/self" && HttpMethods.IsDelete(method)) return Authenticated;   // a device can always log itself out
         // Minting tokens stays on the machine; listing and revoking them and deciding pairings is also open to the owner's browser.
         if (p == "/api/tokens" && HttpMethods.IsPost(method)) return LocalOnly;
