@@ -54,6 +54,7 @@ public sealed class TriggerEngine : IHostedService
             ["webhook"] = () => new WebhookSource(),
             ["file-watch"] = () => new FileWatchSource(),
             ["manual"] = () => new ManualSource(),
+            ["run-completed"] = () => new RunCompletedSource(),
         };
         foreach (ITriggerSource source in plugins.TriggerSources())
         {
@@ -134,22 +135,36 @@ public sealed class TriggerEngine : IHostedService
     {
         if (depth >= MaxChainDepth) throw new InvalidOperationException($"run chains stop after {MaxChainDepth} runs.");
         TriggerDefinition def = Get(id) ?? throw new KeyNotFoundException($"Trigger '{id}' not found.");
-        JsonObject data = new()
-        {
-            ["inputs"] = inputs?.DeepClone(),
-            ["chainDepth"] = depth + 1,
-            ["run"] = new JsonObject
-            {
-                ["id"] = source.RunId, ["triggerId"] = source.TriggerId, ["state"] = source.State, ["text"] = source.Text,
-                ["output"] = source.Output?.DeepClone(), ["files"] = new JsonArray([.. source.Files.Select(f => (JsonNode)f)]),
-            },
-        };
+        JsonObject data = new() { ["inputs"] = inputs?.DeepClone(), ["chainDepth"] = depth + 1, ["run"] = RunData(source) };
         TriggerEvent evt = new($"run:{source.RunId}:{id}", def.Id, DateTimeOffset.UtcNow, "run:" + source.RunId, text, [], data, null);
         if (!_queue.TryEnqueue(evt)) throw new InvalidOperationException($"run {source.RunId} already fired trigger '{id}'.");
         return await ProcessAsync(evt, ct) ?? throw new InvalidOperationException($"Trigger '{id}' did not start a run (filtered or dropped by a hook).");
     }
 
     public const int MaxChainDepth = 5;
+
+    /// <summary>The <c>run-completed</c> source: one event per finished upstream run, de-duplicated by run id.</summary>
+    internal async Task EmitRunCompletedAsync(TriggerSourceContext context, RunResult result)
+    {
+        int depth = _queue.ChainDepth(result.RunId);
+        if (depth >= MaxChainDepth)
+        {
+            _log.LogWarning("Trigger {Id}: run {RunId} is already {Depth} runs deep; run chains stop after {Max} runs", context.TriggerId, result.RunId, depth, MaxChainDepth);
+            return;
+        }
+        JsonObject data = new() { ["chainDepth"] = depth + 1, ["run"] = RunData(result) };
+        TriggerEvent evt = new($"run-completed:{result.RunId}", context.TriggerId, DateTimeOffset.UtcNow, "run:" + result.RunId,
+            result.State == RunStates.Succeeded ? result.Text : result.Error ?? result.Text, [], data, result.ReplyTo);
+        try { await EmitAsync(evt, CancellationToken.None); }
+        catch (Exception ex) { _log.LogError(ex, "Trigger {Id}: run-completed event for run {RunId} failed", context.TriggerId, result.RunId); }
+    }
+
+    private static JsonObject RunData(RunResult run) => new()
+    {
+        ["id"] = run.RunId, ["sessionId"] = run.SessionId, ["triggerId"] = run.TriggerId, ["state"] = run.State, ["text"] = run.Text,
+        ["error"] = run.Error, ["output"] = run.Output?.DeepClone(), ["files"] = new JsonArray([.. run.Files.Select(f => (JsonNode)f)]),
+        ["inputTokens"] = run.InputTokens, ["outputTokens"] = run.OutputTokens,
+    };
 
     /// <summary>The source instance that serves a trigger, when it can send replies on <paramref name="channel"/>.</summary>
     public IReplyChannel? ReplyChannel(string triggerId, string channel) =>

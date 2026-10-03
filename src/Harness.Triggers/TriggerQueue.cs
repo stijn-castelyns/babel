@@ -53,6 +53,21 @@ public sealed class TriggerQueue(HarnessDb db)
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>How many runs deep the chain that started <paramref name="runId"/> is (0 for a run no other run started).</summary>
+    public int ChainDepth(string runId)
+    {
+        using SqliteConnection c = db.Open();
+        using SqliteCommand cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT payload FROM trigger_events WHERE run_id = $r";
+        cmd.Parameters.AddWithValue("$r", runId);
+        int depth = 0;
+        using SqliteDataReader r = cmd.ExecuteReader();
+        while (r.Read())
+            if (JsonSerializer.Deserialize<TriggerEvent>(r.GetString(0), Json)?.Data["chainDepth"] is { } d && int.TryParse(d.ToString(), out int n))
+                depth = Math.Max(depth, n);
+        return depth;
+    }
+
     // ---- per-trigger state: enabled override and last fire time ----
 
     public void EnsureStateTable()

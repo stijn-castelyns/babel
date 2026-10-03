@@ -6,7 +6,7 @@ namespace Harness.Runs.Templates;
 
 /// <summary>
 /// Placeholders in prompts, step settings, <c>*.tmpl</c> files and sink settings: <c>{event.text}</c>, <c>{event.sender}</c>,
-/// <c>{event.id}</c>, <c>{event.data}</c>, <c>{inputs.&lt;name&gt;}</c>, <c>{trigger.id}</c>, <c>{run.id}</c>, <c>{date}</c>.
+/// <c>{event.id}</c>, <c>{event.data}</c>, <c>{event.data.a.b}</c>, <c>{inputs.&lt;name&gt;}</c>, <c>{trigger.id}</c>, <c>{run.id}</c>, <c>{date}</c>.
 /// Unknown placeholders are left as they are, so braces in code survive rendering.
 /// </summary>
 public static partial class TemplateVariables
@@ -27,6 +27,18 @@ public static partial class TemplateVariables
         _ => node.DeepClone(),
     };
 
+    /// <summary>Adds <c>{prefix.a.b}</c> for every value inside <paramref name="node"/>; strings render bare, everything else as JSON.</summary>
+    public static void Flatten(JsonNode? node, string prefix, Dictionary<string, string> vars)
+    {
+        if (node is not JsonObject obj) return;
+        foreach ((string key, JsonNode? value) in obj)
+        {
+            string name = prefix + "." + key;
+            vars[name] = value is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.String ? v.GetValue<string>() : value?.ToJsonString() ?? "";
+            Flatten(value, name, vars);
+        }
+    }
+
     /// <summary>
     /// The variables for one trigger event. Inputs come from the template's defaults, then the trigger's <c>inputs:</c>, then
     /// inputs given at fire time (<c>event.data.inputs</c>); input values may themselves use the event placeholders.
@@ -44,6 +56,7 @@ public static partial class TemplateVariables
             ["time"] = DateTimeOffset.Now.ToString("HHmmss"),
             ["chain.depth"] = evt.Data["chainDepth"]?.ToString() ?? "0",
         };
+        Flatten(evt.Data, "event.data", vars);
         Dictionary<string, string> eventVars = new(vars);
         foreach (IReadOnlyDictionary<string, string> layer in inputLayers)
             foreach ((string name, string value) in layer)

@@ -47,7 +47,12 @@ listener (bearer token) and a separate webhook listener that serves only `/hooks
 **Triggers (phase 4, partial)**: durable SQLite queue with de-duplication by event id, sender allowlists,
 `OnTriggerFired` hooks, keyed sessions (`session: "whatsapp:{event.sender}"`), approval timeouts, enable/disable, manual
 fire with inputs. Sources: `schedule` (cron with time zone, interval, one-shot; `skip`/`runOnce`/`catchUp`), `webhook`
-(HMAC-SHA256), `file-watch`, `manual`, and plugin sources. A trigger references a run template with `template:`; its
+(HMAC-SHA256), `file-watch`, `manual`, `run-completed` and plugin sources. `run-completed` (`triggers: [a, b]` or
+`trigger: a`, `states:` defaulting to `succeeded`, or `any`) fires once per finished upstream run, after its delivery; without
+`triggers:` it follows every other trigger, never its own. Its event text is the run's text (its error when it did not
+succeed), it inherits the run's reply address, and `{event.data.run.state}`, `{event.data.run.output.x}`… expose the rest:
+every value in an event's data is a `{event.data.a.b}` placeholder. Chains through `run-completed` and the `run` sink share
+one depth count, stored with the queued events, and stop after 5 runs. A trigger references a run template with `template:`; its
 `agent:` and `prompt:` override the template's.
 
 **Run templates (phase 4)**: folders under `templates/` with a `template.yaml` (agent, sandbox, workspace steps, `keep`,
@@ -110,7 +115,7 @@ delivery failed: …") and keeps its output. `GET /api/templates` and `harness t
 
 ## Not built yet
 
-- **Phase 4:** `run-completed` source, coalescing, per-sender rate limits,
+- **Phase 4:** coalescing, concurrency limits per trigger, per-sender rate limits,
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.

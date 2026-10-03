@@ -94,17 +94,7 @@ public sealed class OutputDelivery(IServiceProvider services, PluginRegistry plu
             ["date"] = DateTimeOffset.Now.ToString("yyyy-MM-dd"),
             ["output"] = result.Output?.ToJsonString() ?? "",
         };
-        void Flatten(JsonNode? node, string prefix)
-        {
-            if (node is not JsonObject obj) return;
-            foreach ((string key, JsonNode? value) in obj)
-            {
-                string name = prefix + "." + key;
-                vars[name] = value is JsonValue v && v.GetValueKind() == JsonValueKind.String ? v.GetValue<string>() : value?.ToJsonString() ?? "";
-                Flatten(value, name);
-            }
-        }
-        Flatten(result.Output, "output");
+        TemplateVariables.Flatten(result.Output, "output", vars);
         return vars;
     }
 

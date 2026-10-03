@@ -71,6 +71,12 @@ public sealed class RunOrchestrator : IAsyncDisposable
     }
 
     public EventHub Events => _hub;
+
+    /// <summary>
+    /// Raised once for every run that reaches a final state, after its output was delivered. The <c>run-completed</c> trigger
+    /// source and per-trigger concurrency slots listen to it.
+    /// </summary>
+    public event Action<RunResult>? RunCompleted;
     public ApprovalBroker Approvals => _approvals;
     public SessionStore Sessions => _sessions;
 
@@ -279,6 +285,16 @@ public sealed class RunOrchestrator : IAsyncDisposable
         _active.TryRemove(record.Id, out _);
         active.Cancellation.Dispose();
         active.Completion.TrySetResult(result);
+        RaiseCompleted(result);
+    }
+
+    private void RaiseCompleted(RunResult result)
+    {
+        foreach (Action<RunResult> handler in RunCompleted?.GetInvocationList().Cast<Action<RunResult>>() ?? [])
+        {
+            try { handler(result); }
+            catch (Exception ex) { _log.LogWarning(ex, "A run-completed listener failed for run {RunId}", result.RunId); }
+        }
     }
 
     private async Task<RunResult> RunCoreAsync(ActiveRun active, SessionFolder session, ModelProfile profile, CancellationToken outer)
@@ -760,6 +776,12 @@ public sealed class RunOrchestrator : IAsyncDisposable
                 ["inputTokens"] = record.InputTokens,
                 ["outputTokens"] = record.OutputTokens,
             });
+        RaiseCompleted(new RunResult
+        {
+            RunId = runId, SessionId = record.SessionId, State = state, TriggerId = record.TriggerId, Error = error,
+            Output = record.Output is { } output ? JsonNode.Parse(output) : null, Files = record.Files,
+            InputTokens = record.InputTokens, OutputTokens = record.OutputTokens,
+        });
     }
 
     /// <summary>Triggered runs refuse to start without a sandbox unless the trigger allows it.</summary>
