@@ -199,6 +199,34 @@ reader path).
 - *New API:* `PATCH /api/sessions/{id}` (rename; also `harness sessions rename`) and `GET /api/sessions/{id}/files?q=`
   (`@` completion in the session's workspace, which works for folder sessions too).
 
+## Phase 5 plan
+
+Built in this order, each step usable on its own; the API listener keeps working throughout.
+
+1. **Scoped tokens.** A `tokens` table in the harness database (id, name, scopes, SHA-256 of the secret, created,
+   last used, expiry, revoked). Tokens look like `hst_<id>_<secret>`; only the hash is stored. Scopes are `read`, `run`,
+   `approve` and `admin`, and every API route declares the one it needs (GETs and streams `read`; sessions, messages,
+   cancel, fire and enable `run`; approval answers `approve`; tokens, pairing approval, reindex, retention, sandbox tests
+   and trigger reload `admin`). The local socket keeps full access (file permissions are the authentication), and
+   `listeners.apiToken` stays as a legacy all-scopes token. `harness tokens create/ls/revoke` work over the local socket
+   only, so the machine is the root of trust.
+2. **Device pairing and remote login.** `harness login https://host:7443` calls `POST /api/pair` (unauthenticated,
+   rate-limited per address), shows a short user code and polls `POST /api/pair/token` with the private device code until
+   the pairing is approved, denied or expires (10 minutes). It is approved with `harness pair approve <code> --scope …`
+   over the local socket (later also in the PWA after a passkey step-up), which mints a scoped token for that device.
+   The CLI stores it in a 0600 `~/.harness/credentials.json` keyed by URL (behind the same class the OS keychain slots
+   into) and uses it for `--remote`/`HARNESS_URL` when no `--token` is given; `harness logout` revokes and forgets it.
+3. **Identity, passkeys and step-up.** ASP.NET Core Identity on EF Core SQLite (`identity.db`, schema version 3 for
+   passkeys, migrations applied on start), roles `owner`, `operator`, `viewer`. First start prints a one-time setup URL;
+   the first user sets a password and registers a passkey, then setup disables itself. Cookie sign-in (`Secure`,
+   `HttpOnly`, `SameSite=Strict`, sliding expiry) by passkey or password; password sign-in has lockout and rate limiting.
+   Approvals, trigger fires and admin calls from a cookie session need a passkey assertion from the last few minutes.
+   `harness admin reset-password` and `harness admin passkeys clear` work over the local socket only.
+   Verified with Chromium through Playwright and a CDP virtual authenticator.
+4. **PWA.** A small TypeScript app embedded in the binary and served from `/`: dashboard, run, chat, triggers and
+   settings (passkeys, password, paired devices and tokens); manifest and an app-shell service worker that never caches
+   API responses. Web Push with VAPID keys generated at setup comes last.
+
 ## Deviations from the design
 
 | Design | Implementation | Why |
