@@ -20,6 +20,7 @@ internal static class LocalCommands
         yield return Secrets();
         yield return Workspaces();
         yield return Agents();
+        yield return Templates();
         yield return Plugins();
         yield return Install();
         yield return Uninstall();
@@ -78,7 +79,7 @@ internal static class LocalCommands
     private static Command Config()
     {
         Command config = new("config", "Configuration files.");
-        Command validate = new("validate", "Validate config.yaml, agents and sandbox profiles.");
+        Command validate = new("validate", "Validate config.yaml, agents, run templates and sandbox profiles.");
         validate.SetAction(p => Local(() =>
         {
             IReadOnlyList<string> problems = new ConfigCatalog(CliContext.Paths(p)).Validate();
@@ -184,6 +185,31 @@ internal static class LocalCommands
         }));
         agents.Subcommands.Add(ls);
         return agents;
+    }
+
+    private static Command Templates()
+    {
+        Command templates = new("templates", "Run templates.");
+        Command ls = new("ls", "List run templates.");
+        ls.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            IReadOnlyList<TemplateDto> rows;
+            if (CliContext.IsRemote(p))
+            {
+                using HarnessClient c = CliContext.Connect(p);
+                rows = await c.TemplatesAsync(ct);
+            }
+            else rows = [.. new ConfigCatalog(CliContext.Paths(p)).Templates().Select(t => new TemplateDto(t.Name, t.Description, t.Agent, t.Sandbox, t.Output.Kind,
+                [.. Harness.Runs.Templates.WorkspaceBuilder.StepsOf(t).OfType<System.Text.Json.Nodes.JsonObject>().Select(s => s.First().Key)], t.Workspace.Keep))];
+            if (p.GetValue(CliContext.Json)) { Output.Json(rows); return 0; }
+            Output.Table(p, ["TEMPLATE", "AGENT", "SANDBOX", "STEPS", "OUTPUT", "KEEP", "DESCRIPTION"], rows.Select(t => new[]
+            {
+                t.Name, t.Agent ?? "-", t.Sandbox ?? "-", string.Join(",", t.Steps), t.OutputKind, t.Keep, t.Description ?? "",
+            }));
+            return 0;
+        }));
+        templates.Subcommands.Add(ls);
+        return templates;
     }
 
     private static Command Plugins()

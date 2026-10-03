@@ -67,12 +67,14 @@ public class OutputContractTests
         Assert.NotNull(toolSchema);
         Assert.Equal("integer", toolSchema!.Value.GetProperty("properties").GetProperty("updated").GetProperty("type").GetString());
         Assert.False(toolSchema.Value.TryGetProperty("$schema", out _));
+        Assert.False(toolSchema.Value.GetProperty("additionalProperties").GetBoolean());   // the template said so explicitly
 
         // The first submission was rejected with every problem listed.
         Assert.StartsWith("Output rejected", toolResults[0]);
         Assert.Contains("/summary", toolResults[0]);
         Assert.Contains("/updated", toolResults[0]);
         Assert.Contains("report.md", toolResults[0]);
+        Assert.DoesNotContain("did not match", toolResults[0]);   // only the leaf problems, not the applicator summary
         Assert.StartsWith("Output accepted", toolResults[2]);
 
         // Output and declared files are kept with the run, outside the (removed) workspace.

@@ -6,6 +6,7 @@ using Harness.Core.Config;
 using Harness.Core.Sessions;
 using Harness.Extensions.Plugins;
 using Harness.Runs;
+using Harness.Runs.Delivery;
 using Harness.Runs.Templates;
 using Harness.Sdk;
 using Harness.Triggers.Sources;
@@ -128,6 +129,32 @@ public sealed class TriggerEngine : IHostedService
         return await ProcessAsync(evt, ct) ?? throw new InvalidOperationException($"Trigger '{id}' did not start a run (filtered or dropped by a hook).");
     }
 
+    /// <summary>The <c>run</c> sink: fires another trigger with a finished run's result. Chains are limited to <see cref="MaxChainDepth"/> runs.</summary>
+    public async Task<RunRecord> FireFromRunAsync(string id, string? text, JsonObject? inputs, RunResult source, int depth, CancellationToken ct)
+    {
+        if (depth >= MaxChainDepth) throw new InvalidOperationException($"run chains stop after {MaxChainDepth} runs.");
+        TriggerDefinition def = Get(id) ?? throw new KeyNotFoundException($"Trigger '{id}' not found.");
+        JsonObject data = new()
+        {
+            ["inputs"] = inputs?.DeepClone(),
+            ["chainDepth"] = depth + 1,
+            ["run"] = new JsonObject
+            {
+                ["id"] = source.RunId, ["triggerId"] = source.TriggerId, ["state"] = source.State, ["text"] = source.Text,
+                ["output"] = source.Output?.DeepClone(), ["files"] = new JsonArray([.. source.Files.Select(f => (JsonNode)f)]),
+            },
+        };
+        TriggerEvent evt = new($"run:{source.RunId}:{id}", def.Id, DateTimeOffset.UtcNow, "run:" + source.RunId, text, [], data, null);
+        if (!_queue.TryEnqueue(evt)) throw new InvalidOperationException($"run {source.RunId} already fired trigger '{id}'.");
+        return await ProcessAsync(evt, ct) ?? throw new InvalidOperationException($"Trigger '{id}' did not start a run (filtered or dropped by a hook).");
+    }
+
+    public const int MaxChainDepth = 5;
+
+    /// <summary>The source instance that serves a trigger, when it can send replies on <paramref name="channel"/>.</summary>
+    public IReplyChannel? ReplyChannel(string triggerId, string channel) =>
+        _started.Where(s => s.TriggerId == triggerId).Select(s => s.Source).OfType<IReplyChannel>().FirstOrDefault(c => c.Channel == channel);
+
     /// <summary>Dispatches a request on the webhook listener to the source that mapped its path.</summary>
     public async Task HandleWebhookAsync(string path, HttpContext http)
     {
@@ -204,7 +231,8 @@ public sealed class TriggerEngine : IHostedService
         }
         try
         {
-            if (def.Filter.Senders.Count > 0 && evt.Sender != "manual" && (evt.Sender is null || !def.Filter.Senders.Contains(evt.Sender)))
+            bool internalSender = evt.Sender == "manual" || evt.Sender?.StartsWith("run:", StringComparison.Ordinal) == true;
+            if (def.Filter.Senders.Count > 0 && !internalSender && (evt.Sender is null || !def.Filter.Senders.Contains(evt.Sender)))
             {
                 _log.LogWarning("Trigger {Id}: sender {Sender} is not allowed; event dropped", def.Id, evt.Sender ?? "(none)");
                 _queue.Mark(evt, "filtered");
@@ -235,6 +263,7 @@ public sealed class TriggerEngine : IHostedService
                 SessionId = session.Id,
                 Messages = [new ChatMessage(ChatRole.User, prompt)],
                 Template = template is null ? null : new TemplateRun(template.Name, vars),
+                Delivery = (def.Sinks ?? OutputDelivery.Normalize(template?.Output.Sinks)) is { Count: > 0 } sinks ? new DeliveryPlan(sinks, vars) : null,
                 Interactive = false,
                 TriggerId = def.Id,
                 ReplyTo = evt.ReplyTo,

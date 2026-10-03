@@ -16,6 +16,8 @@ public sealed record RunRequest
     /// the template's steps, and the template's output contract.
     /// </summary>
     public TemplateRun? Template { get; init; }
+    /// <summary>Output sinks that receive the result once the run reaches a final state.</summary>
+    public Delivery.DeliveryPlan? Delivery { get; init; }
     /// <summary>True when a person can answer approvals. Unattended runs with no approver treat <c>ask</c> as <c>deny</c>.</summary>
     public bool Interactive { get; init; } = true;
     public string? TriggerId { get; init; }

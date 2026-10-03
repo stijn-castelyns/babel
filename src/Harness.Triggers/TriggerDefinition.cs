@@ -30,6 +30,9 @@ public sealed class TriggerDefinition
     public string? Prompt { get; set; }
     public Dictionary<string, string> Inputs { get; set; } = [];
     public bool AllowUnsandboxed { get; set; }
+    /// <summary>The <c>output.sinks:</c> list (<c>reply</c>, <c>file</c>, <c>webhook</c>, <c>run</c>, or plugin sinks); unset uses the template's.</summary>
+    [YamlDotNet.Serialization.YamlIgnore]
+    public JsonArray? Sinks { get; set; }
     public TriggerApprovals Approvals { get; set; } = new();
 
     [YamlDotNet.Serialization.YamlIgnore]
@@ -47,8 +50,16 @@ public sealed class TriggerDefinition
         Dictionary<object, object?> map = new YamlDotNet.Serialization.DeserializerBuilder().WithAttemptingUnquotedStringTypeDeserialization().Build()
             .Deserialize<Dictionary<object, object?>>(yaml) ?? [];
         map.Remove("source", out object? source);
+        JsonArray? sinks = null;
+        if (map.Remove("output", out object? output) && output is not null)
+        {
+            if (output is not Dictionary<object, object?> o || o.Keys.Any(k => k.ToString() != "sinks"))
+                throw new ConfigException("output: may only contain sinks.");
+            sinks = Yaml.ToJsonNode(o.GetValueOrDefault("sinks")) as JsonArray ?? throw new ConfigException("output.sinks must be a list.");
+        }
         TriggerDefinition def = Yaml.Parse<TriggerDefinition>(new YamlDotNet.Serialization.SerializerBuilder().Build().Serialize(map));
         def.Source = Yaml.ToJsonNode(source) as JsonObject ?? new JsonObject { ["type"] = "manual" };
+        def.Sinks = sinks is null ? null : Harness.Runs.Delivery.OutputDelivery.Normalize(sinks);
         if (string.IsNullOrEmpty(def.Id)) def.Id = fallbackId;
         return def;
     }

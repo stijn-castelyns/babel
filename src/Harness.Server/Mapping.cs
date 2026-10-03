@@ -23,6 +23,9 @@ internal static class Mapping
 
     public static ApprovalDto ToDto(this PendingApproval p) => new(p.RequestId, p.RunId, p.SessionId, p.ToolName, p.ToolCallId, p.Arguments, p.Summary, p.RequestedAt);
 
+    public static TemplateDto ToDto(this RunTemplate t) => new(t.Name, t.Description, t.Agent, t.Sandbox, t.Output.Kind,
+        [.. Runs.Templates.WorkspaceBuilder.StepsOf(t).OfType<System.Text.Json.Nodes.JsonObject>().Select(s => s.First().Key)], t.Workspace.Keep);
+
     public static AgentDto ToDto(this AgentDefinition a) => new(a.Name, a.Description, a.Model, a.Sandbox, [.. a.Tools.Builtin, .. a.Tools.Mcp.Select(m => "mcp:" + m)]);
 
     public static MessageDto ToDto(this HistoryEntry e) => new(e.Seq, e.Ts, e.RunId, e.Message.Role.Value, e.Message.Text,

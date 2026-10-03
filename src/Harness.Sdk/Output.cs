@@ -9,7 +9,22 @@ public interface IOutputSink
     Task DeliverAsync(RunResult result, SinkOptions options, CancellationToken cancellationToken);
 }
 
-public sealed record SinkOptions(JsonObject Settings);
+/// <summary>
+/// A sink's settings from the trigger or template (<c>{ type: file, path: ... }</c>), with placeholders such as
+/// <c>{output.summary}</c> rendered and <c>secret:</c>/<c>env:</c> references resolved, plus the variables used to render them.
+/// </summary>
+public sealed record SinkOptions(JsonObject Settings, IReadOnlyDictionary<string, string>? Variables = null);
+
+/// <summary>
+/// Sends a reply back to where a trigger event came from. Implement it on a trigger source (a chat channel) so the
+/// <c>reply</c> sink can answer the original sender through the source instance that received the event.
+/// </summary>
+public interface IReplyChannel
+{
+    /// <summary>Matches <see cref="ReplyAddress.Channel"/>.</summary>
+    string Channel { get; }
+    Task SendAsync(ReplyAddress to, string text, IReadOnlyList<string> files, CancellationToken cancellationToken);
+}
 
 public static class RunStates
 {

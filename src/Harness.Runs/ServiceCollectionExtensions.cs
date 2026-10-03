@@ -8,6 +8,7 @@ using Harness.Extensions.Hooks;
 using Harness.Extensions.Mcp;
 using Harness.Extensions.Plugins;
 using Harness.Extensions.Skills;
+using Harness.Runs.Delivery;
 using Harness.Runs.Templates;
 using Harness.Sandbox;
 using Harness.Sdk;
@@ -58,6 +59,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWorkspaceStep, CopyStep>();
         services.AddSingleton<IWorkspaceStep, RunStep>();
         services.AddSingleton<WorkspaceBuilder>();
+        services.AddSingleton<IOutputSink, FileSink>();
+        services.AddSingleton<IOutputSink, WebhookSink>();
+        services.AddSingleton<OutputDelivery>();
         services.AddSingleton<RunOrchestrator>();
         return services;
     }

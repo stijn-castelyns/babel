@@ -42,6 +42,7 @@ public static partial class TemplateVariables
             ["trigger.id"] = evt.TriggerId,
             ["date"] = DateTimeOffset.Now.ToString("yyyy-MM-dd"),
             ["time"] = DateTimeOffset.Now.ToString("HHmmss"),
+            ["chain.depth"] = evt.Data["chainDepth"]?.ToString() ?? "0",
         };
         Dictionary<string, string> eventVars = new(vars);
         foreach (IReadOnlyDictionary<string, string> layer in inputLayers)

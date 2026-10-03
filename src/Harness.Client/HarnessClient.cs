@@ -54,6 +54,8 @@ public sealed class HarnessClient : IDisposable
 
     public Task<StatusDto> StatusAsync(CancellationToken ct = default) => GetAsync<StatusDto>("api/status", ct);
     public Task<IReadOnlyList<AgentDto>> AgentsAsync(CancellationToken ct = default) => GetAsync<IReadOnlyList<AgentDto>>("api/agents", ct);
+
+    public Task<IReadOnlyList<TemplateDto>> TemplatesAsync(CancellationToken ct = default) => GetAsync<IReadOnlyList<TemplateDto>>("api/templates", ct);
     public Task<IReadOnlyList<WorkspaceDto>> WorkspacesAsync(CancellationToken ct = default) => GetAsync<IReadOnlyList<WorkspaceDto>>("api/workspaces", ct);
     public Task<IReadOnlyList<string>> WorkspaceFilesAsync(string name, string query, CancellationToken ct = default) =>
         GetAsync<IReadOnlyList<string>>($"api/workspaces/{Uri.EscapeDataString(name)}/files?q={Uri.EscapeDataString(query)}", ct);

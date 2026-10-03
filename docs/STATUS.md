@@ -72,7 +72,22 @@ one of `retries` (default 2), after which the run ends as `invalid_output`. The 
 Accepted output is written to `runs/<run-id>/output/output.json` as soon as it validates (so a run parked on an approval
 keeps it across a restart), declared files are copied to `runs/<run-id>/output/files/`, and both are stored on the run
 record (`harness runs output`, `GET /api/runs/{id}`, `RUN_FINISHED`). Each check emits `OUTPUT_VALIDATED`. The six final
-states are `succeeded`, `invalid_output`, `failed`, `timed_out`, `cancelled` and `rejected`.
+states are `succeeded`, `invalid_output`, `failed`, `timed_out`, `cancelled` and `rejected`. `submit_output` is sent with
+`strict: false` and an explicit `additionalProperties` (the OpenAI adapter otherwise defaults it to `false`, which would
+steer a model to submit `{}` for a free-form object); validation errors list only the failing leaves.
+
+**Output sinks (phase 4)**: a trigger's `output: { sinks: [...] }` (or the template's, when the trigger has none) is
+delivered in the `delivering` state once the run is final. Settings are rendered with the run's variables plus `{run.id}`,
+`{state}`, `{text}`, `{error}`, `{output}` and `{output.a.b}`, and `secret:`/`env:` references are resolved. A sink runs
+for `succeeded` unless its `on:` lists `invalid_output` or `failed`; timeouts, cancellations and rejections never deliver.
+`from: text | output | output.<field> | error | file:<name>` picks the content. Built-ins: `file` (path relative to the
+harness home, `~` expanded, optional `append`), `webhook` (POSTs the result as JSON or a rendered `body:`, extra `headers:`,
+HMAC-signed with `secret:` as `X-Harness-Signature`, the header the webhook source verifies), `reply` (sent through the
+trigger source that received the event when it implements `IReplyChannel`, or a registered `IReplyChannel`; skipped when
+the run has no reply address) and `run` (fires another trigger with `text:`/`inputs:` rendered from this run's result,
+which the next run also sees as `{event.data}`; chains stop after 5 runs). Plugins add sinks with `AddOutputSink<T>`.
+Each delivery emits `OUTPUT_DELIVERED`; when a sink fails, a run with valid output ends `failed` ("Output was valid but
+delivery failed: …") and keeps its output. `GET /api/templates` and `harness templates ls` list the run templates.
 
 ## Deviations from the design
 
@@ -88,12 +103,14 @@ states are `succeeded`, `invalid_output`, `failed`, `timed_out`, `cancelled` and
 | `network: allowlist` through an egress proxy | Treated as `none` | Fails closed until the proxy exists. |
 | Processes started from any thread | All child processes start from one dedicated thread (`ProcessSpawner`) | `bwrap --die-with-parent` uses `PR_SET_PDEATHSIG`, which fires when the forking *thread* exits; retiring thread-pool threads would kill sandboxed commands. |
 | Parked runs keep their whole `RunRequest` | Everything except `ExtraTools` is kept | `submit_output` is rebuilt from the run template on resume; `ExtraTools` is only for programmatic callers. |
+| Delivery failures | A failed sink turns `succeeded` into `failed` | The design leaves it open; valid output that never reached its destination is not a success, and the output stays in `runs/<run-id>/output`. |
+| `reply` sink | Replies through the trigger source instance (`IReplyChannel`) | The source that received the event already holds the channel's credentials; no separate registration is needed. |
 | `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
 | `harness` with no arguments opens the TUI | Opens line-mode chat in the current directory | The Terminal.Gui TUI is not built yet. |
 
 ## Not built yet
 
-- **Phase 4:** output sinks (`reply`, `file`, `webhook`, `run`), `run-completed` source, coalescing, per-sender rate limits,
+- **Phase 4:** `run-completed` source, coalescing, per-sender rate limits,
   daily token budgets, retention policies, compaction checkpoints (summaries in `checkpoints.jsonl`).
 - **Egress proxy** for `network: allowlist`; `harness sandbox test <profile>`.
 - **Terminal UI** (Terminal.Gui 2.5), with the views, keymap and composer from the design.

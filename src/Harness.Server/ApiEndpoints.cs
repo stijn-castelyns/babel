@@ -28,6 +28,7 @@ internal static class ApiEndpoints
         // ---- catalogue ----
 
         api.MapGet("/agents", (ConfigCatalog catalog) => catalog.Agents().Select(a => a.ToDto()));
+        api.MapGet("/templates", (ConfigCatalog catalog) => catalog.Templates().Select(t => t.ToDto()));
 
         api.MapGet("/workspaces", (ConfigCatalog catalog) =>
             catalog.Workspaces.Select(kv => new WorkspaceDto(kv.Key, Core.HarnessPaths.ExpandHome(kv.Value))).OrderBy(w => w.Name));

@@ -7,6 +7,7 @@ using Harness.Core.Agents;
 using Harness.Core.Config;
 using Harness.Core.Sessions;
 using Harness.Extensions.Skills;
+using Harness.Runs.Delivery;
 using Harness.Runs.Templates;
 using Harness.Sandbox;
 using Harness.Sdk;
@@ -35,6 +36,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
     private readonly ApprovalBroker _approvals;
     private readonly ApprovalStore _store;
     private readonly WorkspaceBuilder _workspaces;
+    private readonly OutputDelivery _delivery;
     private readonly IServiceProvider _services;
     private readonly ILogger _log;
 
@@ -47,7 +49,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
 
     public RunOrchestrator(ConfigCatalog catalog, SessionStore sessions, AgentFactory agents, SandboxFactory sandboxes, SkillsExtension skills,
-        SecretStore secrets, TrustStore trust, SessionRuntimeRegistry runtime, EventHub hub, ApprovalBroker approvals, ApprovalStore store, WorkspaceBuilder workspaces, IServiceProvider services,
+        SecretStore secrets, TrustStore trust, SessionRuntimeRegistry runtime, EventHub hub, ApprovalBroker approvals, ApprovalStore store, WorkspaceBuilder workspaces, OutputDelivery delivery, IServiceProvider services,
         ILoggerFactory? loggerFactory = null)
     {
         _catalog = catalog;
@@ -62,6 +64,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
         _approvals = approvals;
         _store = store;
         _workspaces = workspaces;
+        _delivery = delivery;
         _services = services;
         _log = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RunOrchestrator>();
         _global = new SemaphoreSlim(Math.Max(1, catalog.Config.Runs.GlobalConcurrency));
@@ -239,6 +242,19 @@ public sealed class RunOrchestrator : IAsyncDisposable
         }
 
         _store.Unpark(record.Id);
+        if (active.Request.Delivery is { } plan && plan.Sinks.OfType<JsonObject>().Any(s => OutputDelivery.Applies(s, result.State)))
+        {
+            SetState(session, record, RunStates.Delivering);
+            IReadOnlyList<string> failures;
+            try
+            {
+                failures = await _delivery.DeliverAsync(result, plan, data => Emit(session, record.Id, EventTypes.OutputDelivered, data), active.Cancellation.Token);
+            }
+            catch (OperationCanceledException) { failures = ["cancelled during delivery"]; }
+            // Valid output that never arrived where it was meant to go is not a success; it stays in the run's output folder.
+            if (failures.Count > 0 && result.State == RunStates.Succeeded)
+                result = result with { State = RunStates.Failed, Error = "Output was valid but delivery failed: " + string.Join("; ", failures) };
+        }
         CleanupWorkspace(active.Request.Template, record.Id, result.State);
         record.State = result.State;
         record.FinishedAt = DateTimeOffset.UtcNow;

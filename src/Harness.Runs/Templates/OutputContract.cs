@@ -67,6 +67,8 @@ public sealed class OutputContract
                 break;
         }
         _schema ??= JsonSchema.FromText(parameters.ToJsonString());
+        // The OpenAI adapter sends "additionalProperties": false unless the schema says otherwise; keep JSON Schema's default.
+        if (!parameters.ContainsKey("additionalProperties")) parameters["additionalProperties"] = true;
         Tool = new SubmitOutputFunction(this, parameters.Deserialize<JsonElement>(), Describe());
 
         // A run resumed after a restart keeps output it had already submitted.
@@ -182,7 +184,7 @@ public sealed class OutputContract
             if (!arguments.TryGetPropertyValue("output", out JsonNode? inner)) return ["Pass the result in the `output` parameter."];
             instance = JsonSerializer.SerializeToElement(inner);
         }
-        EvaluationResults results = _schema!.Evaluate(instance, new EvaluationOptions { OutputFormat = OutputFormat.List });
+        EvaluationResults results = _schema!.Evaluate(instance, new EvaluationOptions { OutputFormat = OutputFormat.List, IncludeApplicatorErrors = false });
         if (results.IsValid) return [];
         List<string> errors = [];
         foreach (EvaluationResults detail in (results.Details ?? []).Prepend(results))
@@ -240,6 +242,9 @@ public sealed class OutputContract
         public override string Name => ToolName;
         public override string Description => description;
         public override JsonElement JsonSchema => schema;
+        // Strict mode would rewrite the schema (every property required, no extra properties), which changes the contract;
+        // the harness validates against the template's schema itself.
+        public override IReadOnlyDictionary<string, object?> AdditionalProperties { get; } = new Dictionary<string, object?> { ["strict"] = false };
 
         protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {

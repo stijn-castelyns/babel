@@ -6,7 +6,8 @@ This is the `harness`: a self-hosted .NET 10 coding agent harness built on Micro
   original; three embedded diagrams did not survive the export and appear as `[embedded content: …]` placeholders).
 - **Where things stand:** `docs/STATUS.md` lists what is built, every deliberate deviation from the design and why, and
   what is not built yet. Keep it current: update it in the same commit as the work.
-- **Next up:** phase 4 continues with output sinks (`reply`, `file`, `webhook`, `run`).
+- **Next up:** the rest of phase 4: the `run-completed` source, coalescing, per-sender rate limits, daily token budgets,
+  retention policies and compaction checkpoints; then the egress proxy for `network: allowlist`.
 
 ## Build and test
 
@@ -37,6 +38,10 @@ calls is enough. Tests use `ScriptedChatClient` through `AgentFactory.ChatClient
   (`Listener.Tag`).
 - Empty YAML sections deserialize to null; `Yaml.Parse` refills them with defaults. Unknown keys are errors on purpose.
 - Live-only events (`TEXT_MESSAGE_CONTENT`) are never replayed; tests must assert on persisted events.
+- The OpenAI adapter rewrites every tool's root schema and defaults `additionalProperties` to `false`; set it explicitly
+  when a tool takes free-form objects (`submit_output` does).
+- Templated runs always get the output contract: scripted test models must call `submit_output` or the run ends
+  `invalid_output`.
 
 ## Conventions
 
