@@ -321,6 +321,12 @@ public sealed class TuiController : IAsyncDisposable
         {
             if (OpenSessionId is null)
             {
+                // A remote client has no folder to offer; it works in the daemon's first named workspace unless told otherwise.
+                if (PendingSession is { Workspace: null, WorkspaceName: null } && Store.Workspaces.FirstOrDefault() is { } ws)
+                {
+                    PendingSession = PendingSession with { WorkspaceName = ws.Name };
+                    Post(() => Say($"new session in workspace {ws.Name}"));
+                }
                 SessionDto created = await _client.CreateSessionAsync(PendingSession, _cts.Token);
                 Post(() =>
                 {

@@ -135,7 +135,9 @@ internal static class ApiEndpoints
         api.MapPost("/runs/{id}/approvals/{requestId}", (string id, string requestId, ApprovalDecisionRequest body, RunOrchestrator runs, HttpContext http) =>
         {
             string via = Listener.IsLocalSocket(http) ? "cli" : "api";
-            bool ok = runs.ResolveApproval(id, requestId, new ApprovalAnswer(body.Approved, body.Reason, body.DecidedBy ?? via, via, body.Always));
+            // Over the API, who decided is the token's name; a client cannot claim to be someone else.
+            string decidedBy = Listener.IsLocalSocket(http) ? body.DecidedBy ?? via : Auth.Callers.Caller(http).Name;
+            bool ok = runs.ResolveApproval(id, requestId, new ApprovalAnswer(body.Approved, body.Reason, decidedBy, via, body.Always));
             return ok ? Results.Ok() : Results.Conflict(new ErrorDto("No such pending approval (it may already be answered)."));
         });
 

@@ -18,7 +18,8 @@ public static class SessionTree
         List<SessionDto> sessions = [.. store.Sessions.Where(s => Matches(s, filter))];
         List<ListRow> rows = [];
         var groups = sessions
-            .GroupBy(s => s.TriggerId is not null ? Triggered : s.WorkspaceName ?? s.Workspace)
+            // By folder: a named workspace and the same folder opened by path are one group.
+            .GroupBy(s => s.TriggerId is not null ? Triggered : s.Workspace.TrimEnd('/'))
             .OrderBy(g => g.Key == Triggered)
             .ThenByDescending(g => g.Max(s => s.UpdatedAt));
         foreach (var group in groups)
@@ -26,7 +27,9 @@ public static class SessionTree
             bool closed = collapsed.Contains(group.Key) && filter.Length == 0;
             SessionDto sample = group.First();
             string path = group.Key == Triggered ? "" : Tilde(sample.Workspace, home);
-            string name = group.Key == Triggered ? Triggered : sample.WorkspaceName ?? Path.GetFileName(sample.Workspace.TrimEnd('/')) ?? sample.Workspace;
+            string folder = Path.GetFileName(group.Key);
+            string name = group.Key == Triggered ? Triggered
+                : group.Select(s => s.WorkspaceName).FirstOrDefault(n => n is not null) ?? (folder.Length > 0 ? folder : group.Key);
             LineBuilder header = new(width);
             header.Row([new Span(closed ? "▸ " : "▾ ", Style.Dim), new Span(name, Style.Header), new Span(path.Length > 0 && path != name ? "  " + path : "", Style.Dim)]);
             rows.Add(new ListRow(header.Lines[0], group.Key, "group"));

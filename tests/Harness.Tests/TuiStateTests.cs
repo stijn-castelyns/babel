@@ -270,6 +270,7 @@ public class TuiStateTests
             Session("s_b", "Fix flaky test", minutesAgo: 60),
             Session("s_c", "fork of rate limiting", parent: "s_a", minutesAgo: 30),
             Session("s_d", "Upgrade to Vite", workspace: "/src/web", name: "web", minutesAgo: 3 * 24 * 60),
+            Session("s_f", "opened by path", workspace: "/src/api/", name: null, minutesAgo: 90),
             Session("s_e", "whatsapp: +3212", workspace: "/srv/assistant", name: null, trigger: "whatsapp", minutesAgo: 0),
         ]);
         store.UpsertRun(new RunDto("r_e", "s_e", "helper", "local", "whatsapp", "failed", T0, T0, T0, 0, 0, null, "boom", null));
@@ -278,13 +279,14 @@ public class TuiStateTests
         Assert.StartsWith("  Rate limiting", rows[1]);
         Assert.StartsWith("  ↳ fork of rate limiting", rows[2]);
         Assert.StartsWith("  Fix flaky test", rows[3]);
-        Assert.Equal("▾ web  /src/web", rows[4]);
-        Assert.EndsWith("3d", rows[5]);
-        Assert.Equal("▾ Triggered", rows[6]);
-        Assert.StartsWith("✗ whatsapp", rows[7]);
+        Assert.StartsWith("  opened by path", rows[4]);   // same folder, opened without the name: same group
+        Assert.Equal("▾ web  /src/web", rows[5]);
+        Assert.EndsWith("3d", rows[6]);
+        Assert.Equal("▾ Triggered", rows[7]);
+        Assert.StartsWith("✗ whatsapp", rows[8]);
 
         Assert.Equal(["group", "session"], SessionTree.Rows(store, "upgrade", new HashSet<string>(), 40, T0).Select(r => r.Kind));
-        Assert.Equal(2, SessionTree.Rows(store, "", new HashSet<string> { "api" }, 40, T0).Count(r => r.Kind == "session"));
+        Assert.Equal(2, SessionTree.Rows(store, "", new HashSet<string> { "/src/api" }, 40, T0).Count(r => r.Kind == "session"));
     }
 
     [Fact]

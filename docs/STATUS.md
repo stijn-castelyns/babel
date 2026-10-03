@@ -199,6 +199,24 @@ reader path).
 - *New API:* `PATCH /api/sessions/{id}` (rename; also `harness sessions rename`) and `GET /api/sessions/{id}/files?q=`
   (`@` completion in the session's workspace, which works for folder sessions too).
 
+**Scoped tokens and device pairing (phase 5, steps 1–2)**: `auth.db` (0600, separate from the rebuildable `harness.db`)
+holds tokens and pairings. Tokens are `hst_<id>_<secret>` with only a SHA-256 of the secret stored, scopes `read`, `run`,
+`approve`, `admin`, an optional expiry, last-used time (updated at most once a minute) and revocation. `AccessPolicy` gives
+every route its scope: reads `read`; sessions, messages, cancel, fire and enable `run`; approval answers `approve`; reindex,
+retention sweeps, sandbox tests and trigger reload `admin`; token management and pairing approval only over the local
+socket (even an `admin` token cannot mint tokens); `whoami` and `DELETE /api/tokens/self` need any valid token. Over the API
+an approval's `decidedBy` is the token's name, whatever the client claims. `listeners.apiToken` still works as an
+all-scopes token. `harness tokens ls/create/revoke` manage tokens on the machine.
+
+`harness login <url> [--name]` calls `POST /api/pair` (no auth, 10 starts per 10 minutes and 120 polls a minute per
+address), shows a code such as `KE6R-CEBJ` (no 0/O/1/I/L), and polls `POST /api/pair/token` with its private device code.
+`harness pair` lists pending requests and `harness pair approve <code> --scope … [--days]` / `deny` decide them; the token
+is minted when the approved device next polls, in the same step that marks the pairing completed, so a replayed device
+code gets nothing and no usable secret is stored. Pairings expire after 10 minutes. The CLI keeps the token in a 0600
+`credentials.json` keyed by daemon origin and uses it for `--remote`/`HARNESS_URL` when no `--token` is given;
+`harness logout` revokes it on the daemon and forgets it. The TUI over `--remote` starts new sessions in the daemon's
+first named workspace.
+
 ## Phase 5 plan
 
 Built in this order, each step usable on its own; the API listener keeps working throughout.
@@ -235,6 +253,8 @@ Built in this order, each step usable on its own; the API listener keeps working
 | `chat.AsBuilder().UseAIContextProviders(new CompactionProvider(...))` | `CompactingChatClient` runs the same strategies through `CompactionProvider.CompactAsync` | With the provider registered on the chat client, Agent Framework 1.23 stops passing request messages to the `ChatHistoryProvider` whenever a tool runs, so user messages were lost from history. Covered by `RunOrchestratorTests`. |
 | SQLite through EF Core | `Microsoft.Data.Sqlite` directly | The index is a handful of tables; EF Core arrives with ASP.NET Core Identity in phase 5. |
 | Secrets in the OS credential store | A 0600 `secrets.json` behind `SecretStore` | Keychain, DPAPI and libsecret slot in behind the same class. |
+| `harness login` stores the token in the OS keychain | A 0600 `credentials.json` behind `Credentials` | Same reason as secrets; one place to add keychain support later. |
+| Pairings approved in the PWA after a passkey step-up | Approved with `harness pair approve` over the local socket | The PWA and passkeys are not built yet; the local socket is the same root of trust. |
 | Triggers reference a run template | Triggers reference a template, or name `agent`, `workspace` and `prompt` directly | The direct form stays for simple runs against an existing folder (a chat assistant in a named workspace) that need no workspace build. |
 | `run:` steps run `setup.sh` from the workspace | A `./name` missing from the workspace runs from the template folder, mounted read-only | Setup scripts work without copying them into the agent's workspace. |
 | `git` steps | Run on the host, not in the sandbox | Clones need network and credentials the sandbox (often `network: none`) does not have; no repository code runs during a clone. |

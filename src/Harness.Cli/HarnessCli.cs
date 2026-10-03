@@ -22,6 +22,7 @@ public static class HarnessCli
         root.Subcommands.Add(RunCommands.Create());
         foreach (Command c in RunCommands.ApprovalCommands()) root.Subcommands.Add(c);
         root.Subcommands.Add(TriggerCommands.Create());
+        foreach (Command c in AuthCommands.Create()) root.Subcommands.Add(c);
         foreach (Command c in LocalCommands.Create()) root.Subcommands.Add(c);
 
         // 'harness' with no arguments opens the full-screen TUI; piped, with --plain or on a dumb terminal, line-mode chat.

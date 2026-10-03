@@ -149,6 +149,30 @@ public sealed class HarnessClient : IDisposable
     public async Task SetTriggerEnabledAsync(string id, bool enabled, CancellationToken ct = default) =>
         await EnsureAsync(await _http.PatchAsJsonAsync($"api/triggers/{id}", new { enabled }, Json, ct), ct);
 
+    // ---- tokens and pairing ----
+
+    public Task<WhoAmIDto> WhoAmIAsync(CancellationToken ct = default) => GetAsync<WhoAmIDto>("api/whoami", ct);
+
+    public Task<IReadOnlyList<TokenDto>> TokensAsync(CancellationToken ct = default) => GetAsync<IReadOnlyList<TokenDto>>("api/tokens", ct);
+
+    public Task<CreatedTokenDto> CreateTokenAsync(CreateTokenRequest request, CancellationToken ct = default) => PostAsync<CreatedTokenDto>("api/tokens", request, ct);
+
+    public async Task RevokeTokenAsync(string id, CancellationToken ct = default) =>
+        await EnsureAsync(await _http.DeleteAsync($"api/tokens/{Uri.EscapeDataString(id)}", ct), ct);
+
+    /// <summary>Revokes the token this client authenticates with (logout).</summary>
+    public async Task RevokeSelfAsync(CancellationToken ct = default) => await EnsureAsync(await _http.DeleteAsync("api/tokens/self", ct), ct);
+
+    public Task<PairStartResponse> StartPairingAsync(string? name, CancellationToken ct = default) => PostAsync<PairStartResponse>("api/pair", new PairStartRequest(name), ct);
+
+    public Task<PairPollResponse> PollPairingAsync(string deviceCode, CancellationToken ct = default) =>
+        PostAsync<PairPollResponse>("api/pair/token", new PairPollRequest(deviceCode), ct);
+
+    public Task<IReadOnlyList<PairingDto>> PairingsAsync(CancellationToken ct = default) => GetAsync<IReadOnlyList<PairingDto>>("api/pairings", ct);
+
+    public async Task DecidePairingAsync(string userCode, ApprovePairingRequest decision, CancellationToken ct = default) =>
+        await EnsureAsync(await _http.PostAsJsonAsync($"api/pairings/{Uri.EscapeDataString(userCode)}", decision, Json, ct), ct);
+
     // ---- plumbing ----
 
     private async IAsyncEnumerable<EventDto> StreamAsync(string path, long? afterSeq, [EnumeratorCancellation] CancellationToken ct)

@@ -24,7 +24,12 @@ public static class CliContext
     public static HarnessClient Connect(ParseResult p)
     {
         if (RemoteUrl(p) is { } url)
-            return HarnessClient.ForUrl(new Uri(url.EndsWith('/') ? url : url + "/"), p.GetValue(Token) ?? Environment.GetEnvironmentVariable("HARNESS_TOKEN"));
+        {
+            Uri target = new(url.EndsWith('/') ? url : url + "/");
+            // An explicit token wins; otherwise the one 'harness login' stored for this daemon.
+            string? token = p.GetValue(Token) ?? Environment.GetEnvironmentVariable("HARNESS_TOKEN") ?? new Credentials(Paths(p)).TokenFor(target);
+            return HarnessClient.ForUrl(target, token);
+        }
         HarnessPaths paths = Paths(p);
         string socket = paths.Socket;
         try

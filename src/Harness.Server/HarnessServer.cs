@@ -45,6 +45,7 @@ public static class HarnessServer
         });
         builder.Services.AddHarnessRuntime(paths);
         builder.Services.AddHarnessTriggers();
+        builder.Services.AddSingleton(sp => new Auth.AuthStore(paths));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<TriggerEngine>());
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Retention>());
         configure?.Invoke(builder.Services);
@@ -77,22 +78,61 @@ public static class HarnessServer
         WebApplication app = builder.Build();
         string? apiToken = secrets.Resolve(listeners.ApiToken);
 
-        // Listener separation and authentication.
+        Auth.AuthStore auth = app.Services.GetRequiredService<Auth.AuthStore>();
+        Auth.AddressLimiter pairStarts = new(10, TimeSpan.FromMinutes(10)), pairPolls = new(120, TimeSpan.FromMinutes(1));
+
+        // Listener separation, authentication and per-route scopes.
         app.Use(async (http, next) =>
         {
             string? kind = Listener.Kind(http);
-            bool local = kind == Listener.Socket;
             bool hooksPath = http.Request.Path.StartsWithSegments("/hooks");
             if (kind is null || (kind == Listener.Webhooks) != hooksPath)
             {
                 http.Response.StatusCode = StatusCodes.Status404NotFound;
                 return;
             }
-            if (!local && !hooksPath && !TokenMatches(http, apiToken))
+            if (kind == Listener.Socket)
             {
-                http.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                http.Items[Auth.Callers.Key] = Auth.Caller.Socket;
+                await next();
                 return;
             }
+            if (hooksPath)
+            {
+                await next();
+                return;
+            }
+            string required = Auth.AccessPolicy.Required(http.Request.Method, http.Request.Path);
+            if (required == Auth.AccessPolicy.Anonymous)
+            {
+                Auth.AddressLimiter limiter = http.Request.Path.Value!.EndsWith("/token", StringComparison.Ordinal) ? pairPolls : pairStarts;
+                if (!limiter.Allow(http.Connection.RemoteIpAddress))
+                {
+                    await Deny(http, StatusCodes.Status429TooManyRequests, "Too many pairing requests; try again later.");
+                    return;
+                }
+                await next();
+                return;
+            }
+            Auth.Caller? caller = TokenMatches(http, apiToken)
+                ? new Auth.Caller("api-token", new HashSet<string>(ApiScopes.All), Local: false)
+                : Bearer(http) is { } bearer ? auth.Validate(bearer) : null;
+            if (caller is null)
+            {
+                await Deny(http, StatusCodes.Status401Unauthorized, "A valid bearer token is required ('harness login' pairs this device).");
+                return;
+            }
+            if (required == Auth.AccessPolicy.LocalOnly)
+            {
+                await Deny(http, StatusCodes.Status403Forbidden, "This is only available over the daemon's local socket.");
+                return;
+            }
+            if (required != Auth.AccessPolicy.Authenticated && !caller.Has(required))
+            {
+                await Deny(http, StatusCodes.Status403Forbidden, $"This token lacks the '{required}' scope.");
+                return;
+            }
+            http.Items[Auth.Callers.Key] = caller;
             await next();
         });
         app.Use(async (http, next) =>
@@ -103,6 +143,7 @@ public static class HarnessServer
                 http.Response.StatusCode = ex switch
                 {
                     KeyNotFoundException or DirectoryNotFoundException => StatusCodes.Status404NotFound,
+                    UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
                     SessionBusyException => StatusCodes.Status409Conflict,
                     ConfigException or ArgumentException or InvalidOperationException => StatusCodes.Status400BadRequest,
                     _ => StatusCodes.Status500InternalServerError,
@@ -112,6 +153,7 @@ public static class HarnessServer
         });
 
         ApiEndpoints.Map(app);
+        Auth.AuthEndpoints.Map(app);
         app.Map("/hooks/{**path}", (string path, HttpContext http, TriggerEngine triggers) => triggers.HandleWebhookAsync(path, http));
 
         // Before any hosted service starts: the trigger engine replays queued events, and must see the runs they belonged to as failed.
@@ -126,7 +168,8 @@ public static class HarnessServer
             if (failed > 0) log.LogWarning("{Count} run(s) were active when the daemon last stopped and are now marked failed", failed);
             int parked = app.Services.GetRequiredService<RunOrchestrator>().RehydrateParkedRuns();
             if (parked > 0) log.LogInformation("{Count} run(s) are still waiting for approval from before the restart", parked);
-            if (listeners.Api is not null && apiToken is null) log.LogWarning("The API listener has no listeners.apiToken; every API request will be rejected");
+            if (listeners.Api is not null && auth.Tokens().All(t => t.RevokedAt is not null) && apiToken is null)
+                log.LogInformation("The API listener accepts scoped tokens; pair a device with 'harness login {Api}' and approve it with 'harness pair approve'", listeners.Api);
         });
         app.Lifetime.ApplicationStopping.Register(() =>
             app.Services.GetRequiredService<RunOrchestrator>().DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10)));
@@ -134,11 +177,19 @@ public static class HarnessServer
         return app;
     }
 
-    private static bool TokenMatches(HttpContext http, string? expected)
+    private static string? Bearer(HttpContext http)
     {
-        if (expected is null) return false;
         string? header = http.Request.Headers.Authorization.FirstOrDefault();
-        if (header is null || !header.StartsWith("Bearer ", StringComparison.Ordinal)) return false;
-        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(header[7..].Trim()), Encoding.UTF8.GetBytes(expected));
+        return header is not null && header.StartsWith("Bearer ", StringComparison.Ordinal) ? header[7..].Trim() : null;
+    }
+
+    private static bool TokenMatches(HttpContext http, string? expected) =>
+        expected is not null && Bearer(http) is { } given
+        && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(given), Encoding.UTF8.GetBytes(expected));
+
+    private static Task Deny(HttpContext http, int status, string message)
+    {
+        http.Response.StatusCode = status;
+        return http.Response.WriteAsJsonAsync(new ErrorDto(message), HarnessClient.Json);
     }
 }

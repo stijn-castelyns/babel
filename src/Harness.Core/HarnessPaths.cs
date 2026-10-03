@@ -18,6 +18,9 @@ public sealed class HarnessPaths
     public string SecretsFile => Path.Combine(Home, "secrets.json");
     public string McpFile => Path.Combine(Home, "mcp.json");
     public string TuiFile => Path.Combine(Home, "tui.yaml");
+    /// <summary>API tokens and device pairings; unlike harness.db, not rebuildable from other files.</summary>
+    public string AuthDatabase => Path.Combine(Home, "auth.db");
+    public string CredentialsFile => Path.Combine(Home, "credentials.json");
     public string GlobalAgentsMd => Path.Combine(Home, "AGENTS.md");
     public string AgentsDir => Path.Combine(Home, "agents");
     public string PromptsDir => Path.Combine(Home, "prompts");
