@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Diagnostics;
+using Harness.Cli.Update;
 using Harness.Client;
 using Harness.Core;
 using Harness.Core.Config;
@@ -25,6 +26,7 @@ internal static class LocalCommands
         yield return Plugins();
         yield return Install();
         yield return Uninstall();
+        yield return UpdateCommand();
         yield return Status();
     }
 
@@ -272,17 +274,21 @@ internal static class LocalCommands
         return plugin;
     }
 
-    private const string UnitName = "harness.service";
+    private const string UnitName = "harness.service", UpdateUnitName = "harness-update.service", UpdateTimerName = "harness-update.timer";
+
+    private static string UserUnitDir() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "systemd", "user");
 
     private static Command Install()
     {
-        Command install = new("install", "Install the daemon as a user service (systemd on Linux).");
+        Option<bool> autoUpdate = new("--auto-update") { Description = "Also install a timer that runs 'harness update' every hour" };
+        Command install = new("install", "Install the daemon as a user service (systemd on Linux).") { autoUpdate };
         install.SetAction(p => Local(() =>
         {
             if (!OperatingSystem.IsLinux()) throw new CliException("'harness install' currently supports Linux (systemd). On macOS and Windows run 'harness serve' yourself for now.");
             string exe = Environment.ProcessPath ?? throw new CliException("Cannot determine the harness executable path.");
             string home = CliContext.Paths(p).Home;
-            string unitDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "systemd", "user");
+            string unitDir = UserUnitDir();
             Directory.CreateDirectory(unitDir);
             File.WriteAllText(Path.Combine(unitDir, UnitName), $"""
                 [Unit]
@@ -297,11 +303,38 @@ internal static class LocalCommands
                 [Install]
                 WantedBy=default.target
                 """);
+            if (p.GetValue(autoUpdate))
+            {
+                File.WriteAllText(Path.Combine(unitDir, UpdateUnitName), $"""
+                    [Unit]
+                    Description=Install the latest harness release
+
+                    [Service]
+                    Type=oneshot
+                    ExecStart="{exe}" update
+                    Environment=HARNESS_HOME={home}
+                    """);
+                // Persistent catches up on a check missed while the machine slept; the delay spreads checks out.
+                File.WriteAllText(Path.Combine(unitDir, UpdateTimerName), """
+                    [Unit]
+                    Description=Check for harness releases every hour
+
+                    [Timer]
+                    OnCalendar=hourly
+                    RandomizedDelaySec=10min
+                    Persistent=true
+
+                    [Install]
+                    WantedBy=timers.target
+                    """);
+            }
             Run("systemctl", "--user", "daemon-reload");
             Run("systemctl", "--user", "enable", "--now", UnitName);
+            if (p.GetValue(autoUpdate)) Run("systemctl", "--user", "enable", "--now", UpdateTimerName);
             // Lingering keeps the user service running without a login session.
             Run("loginctl", "enable-linger", Environment.UserName);
             Console.WriteLine($"installed {UnitName}; logs: journalctl --user -u {UnitName}");
+            if (p.GetValue(autoUpdate)) Console.WriteLine($"installed {UpdateTimerName}; it installs new releases hourly and restarts the daemon when no run is active");
             return 0;
         }));
         return install;
@@ -313,13 +346,109 @@ internal static class LocalCommands
         uninstall.SetAction(p => Local(() =>
         {
             if (!OperatingSystem.IsLinux()) throw new CliException("'harness uninstall' currently supports Linux (systemd).");
+            if (File.Exists(Path.Combine(UserUnitDir(), UpdateTimerName))) Run("systemctl", "--user", "disable", "--now", UpdateTimerName);
             Run("systemctl", "--user", "disable", "--now", UnitName);
-            File.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "systemd", "user", UnitName));
+            foreach (string unit in new[] { UnitName, UpdateUnitName, UpdateTimerName }) File.Delete(Path.Combine(UserUnitDir(), unit));
             Run("systemctl", "--user", "daemon-reload");
             Console.WriteLine("uninstalled");
             return 0;
         }));
         return uninstall;
+    }
+
+    private static Command UpdateCommand()
+    {
+        Option<bool> check = new("--check") { Description = "Only say whether a newer release exists" };
+        Option<bool> force = new("--force") { Description = "Restart the daemon even while runs are active" };
+        Command update = new("update", "Install the latest release and restart the daemon once no run is active.") { check, force };
+        update.SetAction((p, ct) => HarnessCli.Guard(async () =>
+        {
+            if (CliContext.IsRemote(p)) throw new CliException("'harness update' updates this machine; run it where the daemon runs, without --remote.");
+            HarnessPaths paths = CliContext.Paths(p);
+            UpdateConfig config = new ConfigCatalog(paths).Config.Update;
+            string repository = config.Repository ?? Updater.Metadata("HarnessUpdateRepository")
+                ?? throw new CliException("This build does not know where releases are published; set update.repository (owner/name) in config.yaml.");
+            byte[]? key = null;
+            if ((config.PublicKey ?? Updater.Metadata("HarnessUpdatePublicKey")) is { } keyText)
+            {
+                try { key = Convert.FromBase64String(keyText); }
+                catch (FormatException) { throw new CliException("update.publicKey is not base64."); }
+            }
+            using HttpClient http = new() { Timeout = TimeSpan.FromMinutes(10) };
+            Updater updater = new(http, repository, new SecretStore(paths).Resolve(config.Token), key);
+            string asset = Updater.AssetName();
+            Version current = Updater.CurrentVersion();
+
+            Release? latest;
+            try { latest = await updater.LatestAsync(asset, ct); }
+            catch (HttpRequestException ex) { throw new CliException($"cannot reach GitHub: {ex.Message}"); }
+            if (latest is null)
+            {
+                Console.WriteLine($"no releases found in {repository}{(config.Token is null ? " (a private repository needs update.token)" : "")}");
+                return 0;
+            }
+            bool newer = latest.Version > current;
+            if (p.GetValue(check))
+            {
+                Console.WriteLine(newer ? $"{latest.Tag} is available (this is {current})" : $"up to date ({current})");
+                return 0;
+            }
+
+            Version installed = current;
+            if (newer)
+            {
+                if (OperatingSystem.IsWindows()) throw new CliException("'harness update' cannot replace a running executable on Windows yet; download the release yourself.");
+                string exe = Environment.ProcessPath ?? throw new CliException("Cannot determine the harness executable path.");
+                if (!Path.GetFileNameWithoutExtension(exe).Equals("harness", StringComparison.OrdinalIgnoreCase))
+                    throw new CliException($"Only the single-file harness executable can update itself (this is {exe}).");
+                // Download next to the executable and rename over it: atomic, and safe while the daemon runs the old file.
+                string next = exe + ".new";
+                try
+                {
+                    await updater.DownloadAsync(latest, asset, next, ct);
+                    File.SetUnixFileMode(next, (UnixFileMode)0b111_101_101);
+                    File.Move(next, exe, overwrite: true);
+                }
+                catch (HttpRequestException ex) { throw new CliException($"cannot download {latest.Tag}: {ex.Message}"); }
+                catch (UnauthorizedAccessException) { throw new CliException($"cannot replace {exe}; keep harness in a folder you own, such as ~/.local/bin."); }
+                installed = latest.Version;
+                Console.WriteLine($"installed {latest.Tag} over {current} ({(updater.VerifiesSignatures ? "signature and checksum verified" : "checksum verified; no signing key configured")})");
+            }
+
+            // The daemon runs the new executable once it restarts; a run in progress would be marked failed, so wait for idle.
+            StatusDto? status = await DaemonStatus(p, ct);
+            if (status is null || Updater.Parse(status.Version) is { } running && running >= installed)
+            {
+                if (!newer) Console.WriteLine($"up to date ({current})");
+                return 0;
+            }
+            if (status.ActiveRuns > 0 && !p.GetValue(force))
+            {
+                Console.WriteLine($"{status.ActiveRuns} run(s) active; the daemon moves to {installed} at the next 'harness update' (or use --force)");
+                return 0;
+            }
+            if (OperatingSystem.IsLinux() && File.Exists(Path.Combine(UserUnitDir(), UnitName)))
+            {
+                using Process restart = Process.Start(new ProcessStartInfo("systemctl", ["--user", "restart", UnitName]))!;
+                await restart.WaitForExitAsync(ct);
+                if (restart.ExitCode != 0) throw new CliException($"systemctl --user restart {UnitName} exited {restart.ExitCode}.");
+                Console.WriteLine($"restarted the daemon on {installed}");
+            }
+            else Console.WriteLine($"restart the daemon to run {installed}");
+            return 0;
+        }));
+        return update;
+    }
+
+    /// <summary>The local daemon's status, or null when it is not running.</summary>
+    private static async Task<StatusDto?> DaemonStatus(ParseResult p, CancellationToken ct)
+    {
+        try
+        {
+            using HarnessClient c = CliContext.Connect(p);
+            return await c.StatusAsync(ct);
+        }
+        catch (Exception ex) when (ex is CliException or HttpRequestException) { return null; }
     }
 
     private static Command Status()

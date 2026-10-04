@@ -46,10 +46,12 @@ harness sessions ls -q "rate limiting"
 harness sessions fork <id> --at 42
 ```
 
-## Hosting on Azure
+## Run it from your machine, use it from your phone
 
-`infra/` and the workflows in `.github/workflows/` run the daemon, and with it the web app, on one small Azure VM
-reached over Tailscale, for about $8–9 a month. Setup: [infra/README.md](infra/README.md).
+The daemon serves the web app, so the machine running `harness serve` is the host. Every push to `main` becomes a signed
+GitHub release, and `harness install --auto-update` keeps a machine on the latest one (`harness update`, hourly,
+restarting the daemon only when no run is active). Setup, Tailscale for phone access, and signing keys:
+[docs/HOSTING.md](docs/HOSTING.md).
 
 ## Layout
 

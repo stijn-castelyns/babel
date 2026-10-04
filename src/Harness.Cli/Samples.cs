@@ -31,6 +31,10 @@ internal static class Samples
               # apiToken: secret:api-token
               # webhooks: http://127.0.0.1:7444 # expose only this one, through a tunnel
 
+            # Where 'harness update' finds releases. Release builds already know; a private repository needs a token.
+            # update:
+            #   token: secret:github-releases
+
             # Command hooks: the hook context arrives as JSON on stdin; exit 2 blocks with stderr as the reason.
             hooks: []
             #  - event: toolCalling

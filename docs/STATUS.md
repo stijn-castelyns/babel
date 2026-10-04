@@ -270,25 +270,28 @@ run in the app, where approving still needs the passkey step-up. Settings has en
 and decryption in tests, the service worker's notification through CDP (`tests/e2e/push.mjs`, full Chromium); a real
 subscription needs a browser with a push service, which the sandbox's Chromium lacks.
 
-**Azure hosting**: `infra/main.bicep` and two workflows host the daemon, and with it the web app, on the cheapest Azure
-machine that fits (about $8–9 a month; see `infra/README.md`): one `Standard_B2pts_v2` Arm64 VM (1 GiB, Ubuntu 24.04,
-standard HDD) with no public IP and no inbound rules, reached over Tailscale, plus a storage account for releases.
-*Azure infrastructure* (`.github/workflows/azure-infra.yml`) deploys the template; *Deploy to Azure* (`azure-deploy.yml`,
-on pushes to `main` and after an infrastructure run) tests, publishes the single-file executable for the VM's
-architecture, uploads it, and runs `infra/vm/install.sh` on the VM through `az vm run-command` with a 30-minute read-only
-SAS URL. The script is idempotent and does all machine setup (Tailscale, bubblewrap with an AppArmor `userns` profile,
-ripgrep, git, swap, a `harness` system user, a systemd unit), because custom data cannot change once a VM exists. On the
-first install it runs `harness init` and sets `listeners` to `api: http://127.0.0.1:7443`, the machine's `*.ts.net` name
-as `publicHost`, and `behindProxy: true`, with `tailscale serve` terminating TLS on 443. GitHub signs in with OIDC; the
-setup code is never printed in workflow logs. The VM has a system-assigned identity for Azure OpenAI with `auth: entra`.
-Not verified against a live subscription from here: the template builds and lints clean with Bicep 0.47, the
-workflows pass actionlint, and the deploy step and the first-install config were exercised locally with a stub `az`.
-
 `listeners.behindProxy: true` (needs `publicHost`) is for a TLS-terminating proxy on the same machine in front of an
 `http://` API listener: on loopback connections to the API listener the daemon takes the last `X-Forwarded-Proto` and
 `X-Forwarded-For`, so the origin check, `Secure` cookies and passkey origin checks see https, and rate limits see the
 client. The setup link then uses `https://<publicHost>/`. Without it, the sample config's "put Tailscale Serve in front"
 failed every sign-in with "Cross-origin request refused" (the page is https, the request arrives as http).
+
+**Releases and self-update**: the daemon runs on the owner's own machine (a laptop reached over Tailscale Serve; see
+`docs/HOSTING.md`), so deployment is pull-based. `.github/workflows/release.yml` tests every push to `main`, publishes
+single-file executables for `linux-x64`, `linux-arm64`, `osx-arm64` (built on macOS for its ad-hoc signature) and
+`win-x64` as release `v1.0.<run number>`, with `SHA256SUMS` (headed `# release v…`) and, when `RELEASE_SIGNING_KEY` is
+set, `SHA256SUMS.sig` (`openssl dgst -sha256 -sign`, ECDSA P-256), plus a provenance attestation on public repositories.
+Builds record the repository and the public key (`RELEASE_SIGNING_PUBLIC_KEY`) as assembly metadata of `Harness.Cli`;
+`update: { repository, token, publicKey }` in `config.yaml` overrides them (`token` for private repositories).
+`harness update` asks the GitHub API for the latest release, and when it is newer than this build verifies the signature
+with the recorded key (a build with a key refuses unsigned releases), checks that the signed checksums name that release
+(so an old signed release cannot be relabelled as new), checks the SHA-256, and renames the download over the
+executable. It then restarts `harness.service` when the daemon reports an older version and no run is active; otherwise
+the next run restarts it (`--force` restarts anyway, `--check` only reports). `harness install --auto-update` adds
+`harness-update.service` and an hourly `harness-update.timer` (`Persistent=true`, so a check missed while asleep runs on
+wake); `harness uninstall` removes both. Verified with a local build updating itself from a fake releases API with an
+OpenSSL-signed release while a daemon ran; tests pin an OpenSSL signature and cover wrong keys, unsigned and relabelled
+releases and tampered downloads.
 
 ## Phase 5 plan
 
@@ -345,6 +348,7 @@ Built in this order, each step usable on its own; the API listener keeps working
 | `/compact`, `/approvals` slash commands | Answer that they are not available | The daemon has no API for on-demand compaction or session approval policy; compaction runs automatically at the start of a turn. |
 | One SSE subscription | The firehose, plus one per-run stream for each active run of the open session | Per-run streams replay the journal, so a transcript opened mid-run shows what happened before the TUI looked; the firehose ring would not. |
 | 16-colour, 256-colour and TrueColor detection | Themes use the 16 named colours | They render the same everywhere; Terminal.Gui handles the terminal's colour depth. |
+| `harness update` swaps the binary and restarts the service | The restart waits until no run is active (the next hourly check retries) | A restart marks executing runs failed; parked runs survive it. `--force` restarts at once. |
 | `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
 
 ## Not built yet
@@ -353,5 +357,5 @@ Built in this order, each step usable on its own; the API listener keeps working
   are enforced), and Identity migrations once the schema changes.
 - **Phase 6:** Signal, WhatsApp and Messenger sources with in-chat approvals.
 - OpenTelemetry exporters (traces are emitted but not exported), JSON Schemas for config files,
-  `harness update`, service install on macOS and Windows, the `dotnet new harness-plugin` template and sample plugins,
+  `harness update` on Windows, service install on macOS and Windows, the `dotnet new harness-plugin` template and sample plugins,
   MCP OAuth, AG-UI and MCP-server adapters.

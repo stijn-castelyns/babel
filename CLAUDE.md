@@ -50,9 +50,10 @@ calls is enough. Tests use `ScriptedChatClient` through `AgentFactory.ChatClient
   only takes focus when all its containers have `CanFocus = true`, and `_` in a `Title` is a hotkey marker unless
   `HotKeySpecifier` is cleared. Drive it end to end in a pty with `tests/e2e/` (pty driver, scripted
   OpenAI-compatible server, Playwright passkey check); in-memory `JsonNode` numbers need `Json.Long`, not `GetValue<long>()`.
-- Azure hosting (`infra/`): `az vm run-command invoke` splits `--parameters` at `=` and reports success whatever the
-  script does, so `azure-deploy.yml` passes values as exports in a wrapper and checks for a `HARNESS_DEPLOY_OK` line.
-  Keep `infra/vm/install.sh` idempotent; VM custom data cannot change after creation, so machine setup lives there.
+- Release builds record `HarnessUpdateRepository` and `HarnessUpdatePublicKey` as `Harness.Cli` assembly metadata and
+  get `-p:Version=1.0.<run>`; local builds have neither and are version 1.0.0, so `harness update` treats any release
+  as newer. Unix socket paths must be absolute and under ~107 bytes: point `listeners.socket` somewhere short when the
+  harness home sits deep in a scratch folder.
 - Identity rebuilds the cookie principal on every request (security-stamp validation at interval zero, so resets end
   sessions at once); claims the harness adds at sign-in survive only because `OnRefreshingPrincipal` copies them.
 
