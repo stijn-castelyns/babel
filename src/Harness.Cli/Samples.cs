@@ -26,6 +26,8 @@ internal static class Samples
 
             listeners:
               # api: http://127.0.0.1:7443      # opt in; put Tailscale Serve in front for HTTPS
+              # publicHost: box.tailnet.ts.net  # the name the web app is reached at; passkeys are bound to it
+              # behindProxy: true               # take X-Forwarded-Proto/-For from that proxy on this machine
               # apiToken: secret:api-token
               # webhooks: http://127.0.0.1:7444 # expose only this one, through a tunnel
 

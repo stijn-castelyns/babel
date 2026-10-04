@@ -46,6 +46,11 @@ harness sessions ls -q "rate limiting"
 harness sessions fork <id> --at 42
 ```
 
+## Hosting on Azure
+
+`infra/` and the workflows in `.github/workflows/` run the daemon, and with it the web app, on one small Azure VM
+reached over Tailscale, for about $8–9 a month. Setup: [infra/README.md](infra/README.md).
+
 ## Layout
 
 | Project | Role |

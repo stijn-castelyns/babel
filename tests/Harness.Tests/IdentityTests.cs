@@ -104,6 +104,49 @@ public class IdentityTests
     }
 
     [Fact]
+    public async Task Behind_a_local_tls_proxy_the_forwarded_scheme_counts()
+    {
+        await using TestHome misconfigured = new();
+        File.AppendAllText(misconfigured.Paths.ConfigFile, "\nlisteners:\n  api: http://127.0.0.1:7443\n  behindProxy: true\n");
+        Assert.Contains("publicHost", Assert.Throws<Harness.Core.Config.ConfigException>(() => HarnessServer.Build(misconfigured.Paths)).Message);
+
+        await using TestHome home = new();
+        int port = FreePort();
+        string baseUrl = $"http://127.0.0.1:{port}";
+        string page = $"https://127.0.0.1:{port}";   // what the browser sees: the proxy keeps the Host header
+        File.AppendAllText(home.Paths.ConfigFile, $"\nlisteners:\n  api: {baseUrl}\n  publicHost: box.tailnet.ts.net\n  behindProxy: true\n");
+        await using WebApplication app = HarnessServer.Build(home.Paths);
+        await app.StartAsync();
+        try
+        {
+            using HarnessClient local = HarnessClient.ForSocket(home.Paths.Socket);
+            string code = (await local.NewSetupCodeAsync()).Code;
+            using HttpClient proxy = new(new HttpClientHandler { UseCookies = false }) { BaseAddress = new Uri(baseUrl) };
+            async Task<HttpResponseMessage> Setup(string? forwardedProto)
+            {
+                HttpRequestMessage request = new(HttpMethod.Post, "/auth/setup")
+                {
+                    Content = JsonContent.Create(new { code, userName = "sam", password = "correct horse battery" }, options: HarnessClient.Json),
+                };
+                request.Headers.Add("Origin", page);
+                request.Headers.Add("X-Forwarded-For", "100.64.0.7");
+                if (forwardedProto is not null) request.Headers.Add("X-Forwarded-Proto", forwardedProto);
+                return await proxy.SendAsync(request);
+            }
+
+            // Without the proxy's header, the https page looks like another origin.
+            Assert.Equal(HttpStatusCode.Forbidden, (await Setup(null)).StatusCode);
+            using HttpResponseMessage ok = await Setup("https");
+            Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+            Assert.Contains("secure", ok.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith("harness=", StringComparison.Ordinal)));
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task The_web_app_is_served_from_the_binary_with_a_strict_policy()
     {
         await using TestHome home = new();

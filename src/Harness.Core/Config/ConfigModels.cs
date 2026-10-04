@@ -88,6 +88,11 @@ public sealed class ListenersConfig
     /// id, so it must not change once passkeys are registered. Defaults to the API listener's host.
     /// </summary>
     public string? PublicHost { get; set; }
+    /// <summary>
+    /// A proxy on this machine (Tailscale Serve, Caddy) terminates TLS in front of an <c>http://</c> API listener: take
+    /// <c>X-Forwarded-Proto</c> and <c>X-Forwarded-For</c> from loopback connections. Needs <see cref="PublicHost"/>.
+    /// </summary>
+    public bool BehindProxy { get; set; }
     /// <summary>PFX certificate for an <c>https://</c> API listener.</summary>
     public string? ApiCertificate { get; set; }
     /// <summary>Password of <see cref="ApiCertificate"/> (a <c>secret:</c> or <c>env:</c> reference).</summary>

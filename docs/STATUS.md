@@ -270,6 +270,26 @@ run in the app, where approving still needs the passkey step-up. Settings has en
 and decryption in tests, the service worker's notification through CDP (`tests/e2e/push.mjs`, full Chromium); a real
 subscription needs a browser with a push service, which the sandbox's Chromium lacks.
 
+**Azure hosting**: `infra/main.bicep` and two workflows host the daemon, and with it the web app, on the cheapest Azure
+machine that fits (about $8–9 a month; see `infra/README.md`): one `Standard_B2pts_v2` Arm64 VM (1 GiB, Ubuntu 24.04,
+standard HDD) with no public IP and no inbound rules, reached over Tailscale, plus a storage account for releases.
+*Azure infrastructure* (`.github/workflows/azure-infra.yml`) deploys the template; *Deploy to Azure* (`azure-deploy.yml`,
+on pushes to `main` and after an infrastructure run) tests, publishes the single-file executable for the VM's
+architecture, uploads it, and runs `infra/vm/install.sh` on the VM through `az vm run-command` with a 30-minute read-only
+SAS URL. The script is idempotent and does all machine setup (Tailscale, bubblewrap with an AppArmor `userns` profile,
+ripgrep, git, swap, a `harness` system user, a systemd unit), because custom data cannot change once a VM exists. On the
+first install it runs `harness init` and sets `listeners` to `api: http://127.0.0.1:7443`, the machine's `*.ts.net` name
+as `publicHost`, and `behindProxy: true`, with `tailscale serve` terminating TLS on 443. GitHub signs in with OIDC; the
+setup code is never printed in workflow logs. The VM has a system-assigned identity for Azure OpenAI with `auth: entra`.
+Not verified against a live subscription from here: the template builds and lints clean with Bicep 0.47, the
+workflows pass actionlint, and the deploy step and the first-install config were exercised locally with a stub `az`.
+
+`listeners.behindProxy: true` (needs `publicHost`) is for a TLS-terminating proxy on the same machine in front of an
+`http://` API listener: on loopback connections to the API listener the daemon takes the last `X-Forwarded-Proto` and
+`X-Forwarded-For`, so the origin check, `Secure` cookies and passkey origin checks see https, and rate limits see the
+client. The setup link then uses `https://<publicHost>/`. Without it, the sample config's "put Tailscale Serve in front"
+failed every sign-in with "Cross-origin request refused" (the page is https, the request arrives as http).
+
 ## Phase 5 plan
 
 Built in this order, each step usable on its own; the API listener keeps working throughout.

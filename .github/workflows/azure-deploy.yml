@@ -1,0 +1,101 @@
+# Tests, publishes the single-file harness executable and installs it on the Azure VM, which serves the web app.
+# Setup: infra/README.md.
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+    paths: [src/**, infra/vm/**, Directory.Build.props, Directory.Packages.props, .github/workflows/azure-deploy.yml]
+  workflow_run:
+    workflows: [Azure infrastructure]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC sign-in to Azure, no stored credentials
+  contents: read
+
+concurrency:
+  group: azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: azure
+      url: ${{ steps.install.outputs.url }}
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test
+        run: dotnet test Harness.slnx
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the infrastructure outputs
+        id: infra
+        run: |
+          outputs=$(az deployment group show --resource-group "$RESOURCE_GROUP" --name harness --query properties.outputs --output json)
+          for key in vmName storageAccountName releaseContainer runtimeIdentifier; do
+            echo "$key=$(jq -r ".$key.value" <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Publish
+        run: >
+          dotnet publish src/Harness -c Release -r ${{ steps.infra.outputs.runtimeIdentifier }}
+          --self-contained -p:PublishSingleFile=true -o out
+
+      - name: Install on the VM
+        id: install
+        env:
+          VM: ${{ steps.infra.outputs.vmName }}
+          ACCOUNT: ${{ steps.infra.outputs.storageAccountName }}
+          CONTAINER: ${{ steps.infra.outputs.releaseContainer }}
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          TAILSCALE_HOSTNAME: ${{ vars.TAILSCALE_HOSTNAME || 'harness' }}
+        run: |
+          key=$(az storage account keys list --resource-group "$RESOURCE_GROUP" --account-name "$ACCOUNT" --query '[0].value' --output tsv)
+          echo "::add-mask::$key"
+          blob="harness-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          az storage blob upload --account-name "$ACCOUNT" --account-key "$key" --container-name "$CONTAINER" \
+            --name "$blob" --file out/harness --overwrite --only-show-errors --output none
+          url=$(az storage blob generate-sas --account-name "$ACCOUNT" --account-key "$key" --container-name "$CONTAINER" \
+            --name "$blob" --permissions r --https-only --full-uri --output tsv \
+            --expiry "$(date -u -d '+30 minutes' '+%Y-%m-%dT%H:%MZ')")
+          echo "::add-mask::$url"
+
+          # run-command splits parameters at '=', so the values travel as exports in front of the script.
+          quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+          script="$RUNNER_TEMP/install.sh"
+          {
+            printf '#!/bin/sh\nexport BINARY_URL=%s TAILSCALE_HOSTNAME=%s TAILSCALE_AUTHKEY=%s\n' \
+              "$(quote "$url")" "$(quote "$TAILSCALE_HOSTNAME")" "$(quote "$TAILSCALE_AUTHKEY")"
+            cat <<'WRAPPER'
+          f=$(mktemp) && trap 'rm -f "$f"' EXIT
+          cat > "$f" <<'HARNESS_INSTALL_SH'
+          WRAPPER
+            cat infra/vm/install.sh
+            cat <<'WRAPPER'
+          HARNESS_INSTALL_SH
+          bash "$f"
+          WRAPPER
+          } > "$script"
+
+          result=$(az vm run-command invoke --resource-group "$RESOURCE_GROUP" --name "$VM" \
+            --command-id RunShellScript --scripts @"$script" --query 'value[0].message' --output tsv)
+          rm -f "$script"
+          echo "$result"
+          grep -q '^HARNESS_DEPLOY_OK$' <<<"$result"
+          echo "url=$(grep -o 'https://[^ ]*\.ts\.net/' <<<"$result" | tail -n 1)" >> "$GITHUB_OUTPUT"

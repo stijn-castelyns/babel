@@ -1,0 +1,52 @@
+# Creates or updates the Azure resources in infra/main.bicep. Setup: infra/README.md.
+name: Azure infrastructure
+
+on:
+  push:
+    branches: [main]
+    paths: [infra/main.bicep, .github/workflows/azure-infra.yml]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC sign-in to Azure, no stored credentials
+  contents: read
+
+concurrency:
+  group: azure
+  cancel-in-progress: false
+
+jobs:
+  infra:
+    runs-on: ubuntu-latest
+    environment: azure
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy infra/main.bicep
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          SSH_PUBLIC_KEY: ${{ vars.VM_SSH_PUBLIC_KEY }}
+          # Optional overrides of the template's defaults (see infra/README.md).
+          ARCHITECTURE: ${{ vars.AZURE_VM_ARCHITECTURE }}
+          VM_SIZE: ${{ vars.AZURE_VM_SIZE }}
+          OS_DISK_TYPE: ${{ vars.AZURE_OS_DISK_TYPE }}
+          OS_DISK_SIZE_GB: ${{ vars.AZURE_OS_DISK_SIZE_GB }}
+          PUBLIC_IP: ${{ vars.AZURE_VM_PUBLIC_IP }}
+        run: |
+          params=(sshPublicKey="$SSH_PUBLIC_KEY")
+          add() { if [ -n "$2" ]; then params+=("$1=$2"); fi; }
+          add architecture "$ARCHITECTURE"
+          add vmSize "$VM_SIZE"
+          add osDiskType "$OS_DISK_TYPE"
+          add osDiskSizeGB "$OS_DISK_SIZE_GB"
+          add publicIp "$PUBLIC_IP"
+          # The deployment name is fixed: azure-deploy.yml reads its outputs.
+          az deployment group create --resource-group "$RESOURCE_GROUP" --name harness \
+            --template-file infra/main.bicep --parameters "${params[@]}" \
+            --query properties.outputs --output json
