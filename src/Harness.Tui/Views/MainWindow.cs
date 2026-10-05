@@ -155,6 +155,7 @@ internal sealed class MainWindow : Runnable
             _lastTranscriptCount = t.Items.Count;
         }
         _body.Invalidate();
+        FocusPendingApproval();
         _status.SetNeedsDraw();
         _hint.SetNeedsDraw();
         if (_c.QuitRequested) App?.RequestStop();
@@ -163,6 +164,35 @@ internal sealed class MainWindow : Runnable
 
     private bool _prependPending;
     private TranscriptItem? _firstItem;
+    private string? _autoFocusedApproval;
+
+    /// <summary>
+    /// Approval keys act on the selected card, so a card that arrives while the composer is empty takes the focus (typing
+    /// "a" in the composer would only queue a message behind the waiting turn). Once it is answered, here or anywhere
+    /// else, the focus goes back to the composer. A composer with text in it is never interrupted.
+    /// </summary>
+    private void FocusPendingApproval()
+    {
+        if (_c.Screen != Screen.Session || _overlay.Visible || _c.Transcript is not { } t) return;
+        Region focus = Focus2;
+        if (t.PendingApprovals.FirstOrDefault() is { } card)
+        {
+            if (card.RequestId == _autoFocusedApproval) return;
+            bool composerIdle = focus == Region.Composer && _composer.Value.Length == 0;
+            bool chained = focus == Region.Body && _autoFocusedApproval is not null;
+            if (!composerIdle && !chained) return;
+            _autoFocusedApproval = card.RequestId;
+            _body.Select(t.Items.IndexOf(card));
+            FocusRegion(Region.Body);
+        }
+        else if (_autoFocusedApproval is not null)
+        {
+            _autoFocusedApproval = null;
+            if (focus != Region.Body) return;
+            _body.Follow = true;
+            FocusRegion(Region.Composer);
+        }
+    }
 
     private string Title2()
     {
@@ -545,6 +575,8 @@ internal sealed class MainWindow : Runnable
             _body.Follow = true;
             ApplyScreen();
             FocusRegion(Region.Composer);
+            _autoFocusedApproval = null;
+            FocusPendingApproval();
         });
     }
 

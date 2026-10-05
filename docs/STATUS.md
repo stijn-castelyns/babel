@@ -190,7 +190,9 @@ reader path).
 - *Transcript:* streamed assistant text with light Markdown (headings, fenced and inline code, bullets), tool calls folded to
   one line (tool, main argument, result header, status) and expandable (`edit` as a coloured diff, `write` as added lines,
   `shell` as command plus exit line and output tail, others as arguments and result), pending approvals as cards showing
-  exactly what will run, answered with `a` / `d` (optional reason) / `A`. A message cursor (`j`/`k`, `[`/`]`, `gg`/`G`,
+  exactly what will run, answered with `a` / `d` (optional reason) / `A`. A card that arrives while the composer is empty
+  takes the focus (otherwise `a` + Enter would queue a message behind the waiting turn) and hands it back once answered; a
+  composer with text keeps it, and a message queued behind an approval says how to answer. A message cursor (`j`/`k`, `[`/`]`, `gg`/`G`,
   `/` search with `n`/`N`, `y` copies over OSC 52, `f` forks after the message). Output follows the bottom unless the cursor
   moved up, then "↓ new output" shows. Older history pages load when scrolling past the top.
 - *Composer:* Enter sends, Alt+Enter adds a line (terminals send it as ESC CR, normalised), Up on an empty composer recalls,

@@ -308,7 +308,10 @@ public sealed class TuiController : IAsyncDisposable
         if (ActiveRun is not null)
         {
             Composer.Queued.Enqueue(text);
-            Say($"queued; sent when the turn ends ({Composer.Queued.Count} waiting)");
+            // A turn waiting on an approval never ends by itself; a bare "y" typed here is a message, not an answer.
+            Say(ActiveRun?.State == "awaiting_approval"
+                ? $"queued until the turn ends ({Composer.Queued.Count} waiting); the turn is waiting for an approval: Esc, then a / d / A"
+                : $"queued; sent when the turn ends ({Composer.Queued.Count} waiting)");
             return null;
         }
         await SendNowAsync(text);
