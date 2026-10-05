@@ -23,6 +23,25 @@ phases 5–6 make it reachable from a phone and chat apps.
 (background jobs with handles). Plain-text results with a continuation header; read-before-write by content hash;
 one path policy that canonicalises symlinks; oversized output spilled to `.harness/spill/`.
 
+**Web tools**: `web_search` and `web_fetch`, opt-in (listed under `tools.builtin`; not in the default list) and `ask` by
+default like every tool that is not read-only. Neither needs an API key. `web_search(query, count, recency)` asks the SearXNG
+instance in `config.yaml` `tools.web.searxng` (its JSON API; a 403 or 429 is explained as the `search.formats` or limiter
+setting), or else posts to DuckDuckGo's script-free HTML page (`html.duckduckgo.com/html/`) and reads the result blocks, ads
+skipped and `/l/?uddg=` links unwrapped. DuckDuckGo answers an honest `harness/1.0` user agent but gives browser-imitating
+ones its bot check (HTTP 202, `anomaly-modal`), which the tool reports with the SearXNG hint. `web_fetch(url)` turns HTML
+into Markdown-like text of the main content (`main`, `[role=main]`, a lone `article`, else `body` minus navigation, page
+header, footer and aside): headings, nested lists, code fences, tables as `a | b` rows, links as absolute `[text](url)`;
+JSON, XML and other text pass through; binary types are only described; downloads stop at 5 MB; large pages are spilled like
+any result. Both tools run in the daemon, so they reach the internet whatever the sandbox's `network:` says; `web_fetch`
+therefore connects only to public addresses (no loopback, private, link-local and metadata, carrier-grade NAT/Tailscale,
+multicast or reserved ranges, NAT64/6to4 judged by their IPv4 address), checked before the request and again on the
+resolved address at connect time so DNS rebinding cannot get past it (the owner's own proxy may be private). Redirects on
+the same host (give or take `www.`) are followed up to 5 times; a redirect to another host is reported, not followed, so an
+approval or allowlist pattern (`allowlist: { web_fetch: ["https://learn.microsoft.com/*"] }`; the URL is the main argument)
+never lets a run read a different site. HTML is parsed with AngleSharp. `scripts/searxng.sh` runs a private SearXNG container
+(Docker or Podman, `127.0.0.1:8888`, JSON on, limiter off, only `settings.yml` mounted read-only so the image cannot chown
+the host folder) and adds `tools.web.searxng` to `config.yaml`; see `docs/HOSTING.md`.
+
 **Sessions (phase 1)**: a folder per session with `session.json`, append-only `history.jsonl` and `events.jsonl`, a
 single-writer lease, torn-line tolerance, synthetic results for orphaned tool calls, fork at any sequence number,
 Markdown/JSON export, and a rebuildable SQLite index with FTS5 search.
@@ -354,6 +373,7 @@ Built in this order, each step usable on its own; the API listener keeps working
 | 16-colour, 256-colour and TrueColor detection | Themes use the 16 named colours | They render the same everywhere; Terminal.Gui handles the terminal's colour depth. |
 | Chat Completions only, never `GetResponsesClient` | A profile may opt into `api: responses` (azure-openai and openai); `StatelessResponsesChatClient` sends every request with `store: false`, `include: [reasoning.encrypted_content]` and the full local history, rejects any `ConversationId` either way, and the guard refuses a Responses client without it | Some Azure reasoning models reject function tools over Chat Completions at every `reasoning_effort`. History stays in the session files: nothing is stored server-side (a `store: false` response id 404s), encrypted reasoning round-trips from disk, and Agent Framework never switches to service-managed history. Azure profiles use the v1 surface (`<resource>/openai/v1/`); a Foundry project endpoint is mapped to it. Covered by `ResponsesApiTests`. |
 | `harness update` swaps the binary and restarts the service | The restart waits until no run is active (the next hourly check retries) | A restart marks executing runs failed; parked runs survive it. `--force` restarts at once. |
+| "Ship seven tools and nothing else" | Two more opt-in built-ins, `web_search` and `web_fetch` | Web access without an MCP server or an external search API key; they stay out of the default list, so agents that do not ask for them see the same seven tools. |
 | `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
 
 ## Not built yet

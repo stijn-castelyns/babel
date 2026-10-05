@@ -3,6 +3,9 @@
     <ProjectReference Include="..\Harness.Core\Harness.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="AngleSharp" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Harness.Tests" />
   </ItemGroup>
 </Project>

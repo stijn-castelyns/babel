@@ -37,6 +37,7 @@ public sealed class RunContext : IToolContext
     /// <summary>Secret values to mask in tool results and events.</summary>
     public IReadOnlyCollection<string> SecretValues { get; init; } = [];
     public int SpillThresholdChars { get; init; } = 24_000;
+    public WebToolsConfig Web { get; init; } = new();
     public IReadOnlyList<string> FolderInstructionFiles { get; init; } = ["AGENTS.md"];
 
     public string SessionId => Session.Id;

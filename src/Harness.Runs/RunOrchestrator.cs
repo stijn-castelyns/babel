@@ -412,6 +412,7 @@ public sealed class RunOrchestrator : IAsyncDisposable
             TriggerId = request.TriggerId,
             SecretValues = _secrets.Values(),
             SpillThresholdChars = _catalog.Config.Tools.SpillThresholdChars,
+            Web = _catalog.Config.Tools.Web,
             FolderInstructionFiles = _catalog.Config.Prompts.FolderFiles,
         };
 

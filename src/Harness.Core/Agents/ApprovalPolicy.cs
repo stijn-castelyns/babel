@@ -60,7 +60,7 @@ public static class ApprovalPolicy
     /// <summary>The argument that best describes a call: the command for shell, the path for file tools.</summary>
     public static string? MainArgument(string toolName, IReadOnlyDictionary<string, object?> arguments)
     {
-        foreach (string key in new[] { "command", "path", "pattern", "handle", "query", "name" })
+        foreach (string key in new[] { "command", "path", "pattern", "handle", "query", "url", "name" })
             if (arguments.TryGetValue(key, out object? value) && value is not null)
                 return value is JsonElement e ? (e.ValueKind == JsonValueKind.String ? e.GetString() : e.GetRawText()) : value.ToString();
         return null;

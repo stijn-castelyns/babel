@@ -12,7 +12,7 @@ This is the `harness`: a self-hosted .NET 10 coding agent harness built on Micro
 
 ```bash
 dotnet build Harness.slnx
-dotnet test Harness.slnx        # ~100 tests, a few seconds; includes real bubblewrap and real-socket server tests
+dotnet test Harness.slnx        # ~160 tests, a few seconds; includes real bubblewrap and real-socket server tests
 ```
 
 The build treats warnings as errors and uses central package versions (`Directory.Packages.props`).

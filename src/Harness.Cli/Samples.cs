@@ -32,6 +32,10 @@ internal static class Samples
               # apiToken: secret:api-token
               # webhooks: http://127.0.0.1:7444 # expose only this one, through a tunnel
 
+            # web_search uses DuckDuckGo's HTML page unless a SearXNG instance is set here (scripts/searxng.sh runs one).
+            # tools:
+            #   web: { searxng: http://127.0.0.1:8888 }
+
             # Where 'harness update' finds releases. Release builds already know; a private repository needs a token.
             # update:
             #   token: secret:github-releases
@@ -49,7 +53,7 @@ internal static class Samples
             model: local
             instructions: prompts/coder.md
             tools:
-              builtin: [read, list, glob, grep, edit, write, shell]
+              builtin: [read, list, glob, grep, edit, write, shell]   # add web_search, web_fetch for the web (they run outside the sandbox)
               mcp: []
             skills: [skills/]
             approvals: { shell: ask, write: allow, edit: allow, mcp: ask }

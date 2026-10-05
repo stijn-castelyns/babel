@@ -134,6 +134,17 @@ public sealed class ToolsConfig
 {
     /// <summary>Tool results above this many characters are spilled to <c>.harness/spill</c>.</summary>
     public int SpillThresholdChars { get; set; } = 24_000;
+    public WebToolsConfig Web { get; set; } = new();
+}
+
+/// <summary><c>tools.web:</c> in <c>config.yaml</c>: where the <c>web_search</c> tool sends queries.</summary>
+public sealed class WebToolsConfig
+{
+    /// <summary>
+    /// Base URL of a SearXNG instance with the JSON format enabled, for example <c>http://127.0.0.1:8888</c>.
+    /// Unset: queries go to DuckDuckGo's HTML page, which needs no setup but may answer busy addresses with a bot check.
+    /// </summary>
+    public string? Searxng { get; set; }
 }
 
 public sealed class RunLimitsConfig

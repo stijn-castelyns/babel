@@ -3,10 +3,13 @@ using Microsoft.Extensions.AI;
 
 namespace Harness.Tools;
 
-/// <summary>Contributes the seven built-in tools an agent definition lists under <c>tools.builtin</c>.</summary>
+/// <summary>
+/// Contributes the built-in tools an agent definition lists under <c>tools.builtin</c>. The web tools are opt-in: they run
+/// in the daemon and reach the internet whatever the sandbox's network setting, so they are not in the default list.
+/// </summary>
 public sealed class BuiltinToolsExtension : IRunExtension
 {
-    public static readonly IReadOnlyList<string> Names = ["read", "list", "glob", "grep", "edit", "write", "shell"];
+    public static readonly IReadOnlyList<string> Names = ["read", "list", "glob", "grep", "edit", "write", "shell", "web_search", "web_fetch"];
 
     public ValueTask<IEnumerable<AITool>> GetToolsAsync(RunContext run, CancellationToken cancellationToken) =>
         ValueTask.FromResult(Create(run.Agent.Tools.Builtin, new Workspace(run.WorkspaceRoot), run));
@@ -15,6 +18,7 @@ public sealed class BuiltinToolsExtension : IRunExtension
     {
         FileTools files = new(workspace, run.State);
         ShellTool shell = new(workspace, run.Sandbox, run.State);
+        WebTools web = new(run.Web);
         foreach (string name in names.Distinct())
         {
             yield return name switch
@@ -26,6 +30,8 @@ public sealed class BuiltinToolsExtension : IRunExtension
                 "edit" => AIFunctionFactory.Create(files.Edit, name: "edit"),
                 "write" => AIFunctionFactory.Create(files.Write, name: "write"),
                 "shell" => AIFunctionFactory.Create(shell.Shell, name: "shell"),
+                "web_search" => AIFunctionFactory.Create(web.WebSearch, name: "web_search"),
+                "web_fetch" => AIFunctionFactory.Create(web.WebFetch, name: "web_fetch"),
                 _ => throw new Harness.Core.Config.ConfigException($"Unknown built-in tool '{name}'. Built-ins are: {string.Join(", ", Names)}."),
             };
         }

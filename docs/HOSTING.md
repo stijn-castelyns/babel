@@ -61,6 +61,23 @@ exposed to the internet.
 - **Models.** A local Ollama model works as is. Azure OpenAI with `auth: { type: entra }` picks up your `az login`,
   because the user service runs as you.
 
+## Web search
+
+Agents that list `web_search` (and `web_fetch`) under `tools.builtin` can search the web without an API key. Out of the
+box the tool reads DuckDuckGo's HTML results page; that can start answering with a bot check, especially from cloud
+addresses. A private [SearXNG](https://docs.searxng.org) instance next to the daemon is sturdier:
+
+```bash
+scripts/searxng.sh            # Docker or Podman; listens on 127.0.0.1:8888 only
+```
+
+It writes `~/.harness/searxng/settings.yml` (JSON format on, bot limiter off, a random secret key kept across reruns),
+starts the `harness-searxng` container with `--restart unless-stopped`, checks that a JSON query returns results, and
+adds `tools.web.searxng: http://127.0.0.1:8888` to `config.yaml` (when the file already has a `tools:` section it prints
+the lines to add instead). The next run uses it; the daemon needs no restart. `scripts/searxng.sh test` queries it again,
+`scripts/searxng.sh down` removes the container, and `--port`, `--engine` and `--image` change the defaults. With Podman,
+`systemctl --user enable --now podman-restart.service` brings the container back after a reboot.
+
 ## Releases and automatic updates
 
 `.github/workflows/release.yml` runs on every push to `main` (docs-only changes aside): it runs the tests, publishes
