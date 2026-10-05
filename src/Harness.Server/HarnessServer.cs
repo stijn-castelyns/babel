@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -47,6 +48,8 @@ public static class HarnessServer
         builder.Services.AddHarnessTriggers();
         builder.Services.AddSingleton(sp => new Auth.AuthStore(paths));
         Uri? apiUri = listeners.Api is { Length: > 0 } a ? new Uri(a) : null;
+        if (listeners.BehindProxy && listeners.PublicHost is null)
+            throw new ConfigException("listeners.behindProxy needs listeners.publicHost: the host name the proxy serves, which passkeys are bound to.");
         string? publicHost = listeners.PublicHost ?? (apiUri?.Host is "127.0.0.1" or "::1" ? "localhost" : apiUri?.Host);
         Auth.IdentitySetup.AddHarnessIdentity(builder.Services, paths, publicHost, secureCookies: apiUri?.Scheme == "https");
         builder.Services.AddSingleton(new Push.VapidKeys(secrets));
@@ -92,6 +95,7 @@ public static class HarnessServer
             signIns = new(20, TimeSpan.FromMinutes(10));
         string? setupCode = Auth.IdentitySetup.InitialiseAsync(app.Services).GetAwaiter().GetResult();
 
+        if (listeners.BehindProxy) app.Use((http, next) => { ApplyForwardedHeaders(http); return next(); });
         app.UseAuthentication();
 
         // Listener separation, authentication and per-route scopes.
@@ -216,7 +220,7 @@ public static class HarnessServer
             if (parked > 0) log.LogInformation("{Count} run(s) are still waiting for approval from before the restart", parked);
             if (setupCode is not null && listeners.Api is not null)
                 log.LogWarning("No user yet. Create the owner at {Url}setup?code={Code} (or get a new code with 'harness admin setup')",
-                    listeners.Api.EndsWith('/') ? listeners.Api : listeners.Api + "/", setupCode);
+                    listeners.BehindProxy ? $"https://{listeners.PublicHost}/" : listeners.Api.EndsWith('/') ? listeners.Api : listeners.Api + "/", setupCode);
             if (listeners.Api is not null && auth.Tokens().All(t => t.RevokedAt is not null) && apiToken is null)
                 log.LogInformation("The API listener accepts scoped tokens; pair a device with 'harness login {Api}' and approve it with 'harness pair approve'", listeners.Api);
         });
@@ -224,6 +228,23 @@ public static class HarnessServer
             app.Services.GetRequiredService<RunOrchestrator>().DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10)));
         app.Lifetime.ApplicationStopped.Register(() => { try { File.Delete(socket); } catch (IOException) { } });
         return app;
+    }
+
+    /// <summary>
+    /// Behind a TLS-terminating proxy on this machine the API listener sees plain http from loopback. The proxy's
+    /// <c>X-Forwarded-Proto</c> makes the request https again (for the origin check, Secure cookies and passkey origins), and
+    /// its <c>X-Forwarded-For</c> gives rate limits the real client. The last value of each is the one this proxy added.
+    /// Connections from anywhere else, and the other listeners, are left alone. The proxy must keep the Host header
+    /// (Tailscale Serve and Caddy do).
+    /// </summary>
+    private static void ApplyForwardedHeaders(HttpContext http)
+    {
+        if (Listener.Kind(http) != Listener.Api || http.Connection.RemoteIpAddress is not { } remote || !IPAddress.IsLoopback(remote)) return;
+        if (Last(http.Request.Headers["X-Forwarded-Proto"]) is { } scheme && scheme is "https" or "http") http.Request.Scheme = scheme;
+        if (IPAddress.TryParse(Last(http.Request.Headers["X-Forwarded-For"]), out IPAddress? client)) http.Connection.RemoteIpAddress = client;
+
+        static string? Last(Microsoft.Extensions.Primitives.StringValues values) =>
+            values.ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
     }
 
     private static string? Bearer(HttpContext http)

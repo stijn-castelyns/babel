@@ -12,4 +12,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Harness.Tests" />
   </ItemGroup>
+  <!-- Release builds (.github/workflows/release.yml) record where 'harness update' finds the next release and the key it is signed with. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="HarnessUpdateRepository" Value="$(HarnessUpdateRepository)" Condition="'$(HarnessUpdateRepository)' != ''" />
+    <AssemblyMetadata Include="HarnessUpdatePublicKey" Value="$(HarnessUpdatePublicKey)" Condition="'$(HarnessUpdatePublicKey)' != ''" />
+  </ItemGroup>
 </Project>

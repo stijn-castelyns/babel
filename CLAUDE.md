@@ -55,6 +55,10 @@ calls is enough. Tests use `ScriptedChatClient` through `AgentFactory.ChatClient
   stateless replay needs. A fake Responses stream must send `response.output_item.added` before text deltas, or MEAI
   gives the text no role and it is coalesced into the previous (tool) message. The OpenAI SDK marks the Responses types
   `OPENAI001`; suppress it per file, not project-wide.
+- Release builds record `HarnessUpdateRepository` and `HarnessUpdatePublicKey` as `Harness.Cli` assembly metadata and
+  get `-p:Version=1.0.<run>`; local builds have neither and are version 1.0.0, so `harness update` treats any release
+  as newer. Unix socket paths must be absolute and under ~107 bytes: point `listeners.socket` somewhere short when the
+  harness home sits deep in a scratch folder.
 - Identity rebuilds the cookie principal on every request (security-stamp validation at interval zero, so resets end
   sessions at once); claims the harness adds at sign-in survive only because `OnRefreshingPrincipal` copies them.
 

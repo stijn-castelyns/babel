@@ -1,0 +1,104 @@
+# Tests every push to main and publishes it as a GitHub release: one single-file executable per platform, SHA256SUMS,
+# and SHA256SUMS.sig when RELEASE_SIGNING_KEY is set. Machines pick releases up with 'harness update' (hourly with
+# 'harness install --auto-update'). Setup: docs/HOSTING.md.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md', 'tests/e2e/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION: 1.0.${{ github.run_number }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test Harness.slnx
+
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { rid: linux-x64, os: ubuntu-latest }
+          - { rid: linux-arm64, os: ubuntu-latest }
+          - { rid: osx-arm64, os: macos-latest }   # built on macOS so the executable gets the ad-hoc signature Apple silicon requires
+          - { rid: win-x64, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish
+        env:
+          PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY }}
+        run: |
+          dotnet publish src/Harness -c Release -r ${{ matrix.rid }} --self-contained -p:PublishSingleFile=true \
+            -p:Version="$VERSION" -p:HarnessUpdateRepository="$GITHUB_REPOSITORY" -p:HarnessUpdatePublicKey="$PUBLIC_KEY" -o out
+          mkdir dist
+          if [ -f out/harness.exe ]; then mv out/harness.exe dist/harness-${{ matrix.rid }}.exe; else mv out/harness dist/harness-${{ matrix.rid }}; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harness-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # create the release
+      id-token: write       # build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: harness-*
+          merge-multiple: true
+          path: dist
+
+      - name: Checksums and signature
+        env:
+          SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        working-directory: dist
+        run: |
+          # The release line is signed with the checksums, so an old release cannot be republished under a newer tag.
+          { echo "# release v$VERSION"; sha256sum harness-*; } > SHA256SUMS
+          if [ -n "$SIGNING_KEY" ]; then
+            key="$RUNNER_TEMP/release-signing.pem"
+            printf '%s\n' "$SIGNING_KEY" > "$key"
+            openssl dgst -sha256 -sign "$key" -out SHA256SUMS.sig SHA256SUMS
+            rm -f "$key"
+          else
+            echo "::warning::RELEASE_SIGNING_KEY is not set, so this release is unsigned; 'harness update' then only checks checksums."
+          fi
+          cat SHA256SUMS
+
+      # Attestations are free for public repositories (private ones need GitHub Enterprise Cloud).
+      # Check a download with: gh attestation verify harness-linux-x64 --repo <owner>/<repo>
+      - uses: actions/attest-build-provenance@v3
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: dist/harness-*
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+          --title "harness $VERSION" --generate-notes

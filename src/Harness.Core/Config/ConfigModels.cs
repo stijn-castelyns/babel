@@ -13,6 +13,21 @@ public sealed class HarnessConfig
     public Dictionary<string, object?> Plugins { get; set; } = [];
     public RunLimitsConfig Runs { get; set; } = new();
     public RetentionConfig Retention { get; set; } = new();
+    public UpdateConfig Update { get; set; } = new();
+}
+
+/// <summary>
+/// <c>update:</c> in <c>config.yaml</c>: where <c>harness update</c> looks for releases. Release builds carry the repository
+/// and signing key they were built with, so this is only needed for a fork, a private repository or a local build.
+/// </summary>
+public sealed class UpdateConfig
+{
+    /// <summary>GitHub repository whose releases to install, <c>owner/name</c>.</summary>
+    public string? Repository { get; set; }
+    /// <summary>A GitHub token that can read the repository's releases (a <c>secret:</c> or <c>env:</c> reference); private repositories only.</summary>
+    public string? Token { get; set; }
+    /// <summary>The release signing key: an ECDSA P-256 public key, base64 SubjectPublicKeyInfo (DER).</summary>
+    public string? PublicKey { get; set; }
 }
 
 /// <summary>
@@ -98,6 +113,11 @@ public sealed class ListenersConfig
     /// id, so it must not change once passkeys are registered. Defaults to the API listener's host.
     /// </summary>
     public string? PublicHost { get; set; }
+    /// <summary>
+    /// A proxy on this machine (Tailscale Serve, Caddy) terminates TLS in front of an <c>http://</c> API listener: take
+    /// <c>X-Forwarded-Proto</c> and <c>X-Forwarded-For</c> from loopback connections. Needs <see cref="PublicHost"/>.
+    /// </summary>
+    public bool BehindProxy { get; set; }
     /// <summary>PFX certificate for an <c>https://</c> API listener.</summary>
     public string? ApiCertificate { get; set; }
     /// <summary>Password of <see cref="ApiCertificate"/> (a <c>secret:</c> or <c>env:</c> reference).</summary>
