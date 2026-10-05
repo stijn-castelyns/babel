@@ -1,4 +1,6 @@
+using Harness.Core.Agents;
 using Harness.Core.Config;
+using Microsoft.Extensions.AI;
 
 namespace Harness.Tests;
 
@@ -46,5 +48,20 @@ public class ConfigTests
         Assert.Equal(["github"], def.Tools.Mcp);
         Assert.Equal("ask", def.Approvals["mcp"]);
         Assert.Equal(20, def.Compaction.ToolResultsAfter);
+    }
+
+    [Fact]
+    public void Reasoning_effort_maps_to_chat_options()
+    {
+        HarnessConfig config = Yaml.Parse<HarnessConfig>("""
+            models:
+              azure: { provider: azure-openai, endpoint: https://x.openai.azure.com, deployment: d, reasoningEffort: none }
+              plain: { provider: ollama, endpoint: http://localhost:11434, model: m }
+            """);
+        Assert.Equal(ReasoningEffort.None, AgentFactory.Reasoning(config.Models["azure"])?.Effort);
+        Assert.Null(AgentFactory.Reasoning(config.Models["plain"]));
+        Assert.Equal(ReasoningEffort.ExtraHigh, AgentFactory.Reasoning(new ModelProfile { ReasoningEffort = "extraHigh" })?.Effort);
+        Assert.Throws<ConfigException>(() => AgentFactory.Reasoning(new ModelProfile { ReasoningEffort = "max" }));
+        Assert.Throws<ConfigException>(() => AgentFactory.Reasoning(new ModelProfile { ReasoningEffort = "2" }));
     }
 }

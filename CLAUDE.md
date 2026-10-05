@@ -50,6 +50,11 @@ calls is enough. Tests use `ScriptedChatClient` through `AgentFactory.ChatClient
   only takes focus when all its containers have `CanFocus = true`, and `_` in a `Title` is a hotkey marker unless
   `HotKeySpecifier` is cleared. Drive it end to end in a pty with `tests/e2e/` (pty driver, scripted
   OpenAI-compatible server, Playwright passkey check); in-memory `JsonNode` numbers need `Json.Long`, not `GetValue<long>()`.
+- `api: responses` profiles go through `StatelessResponsesChatClient` (`store: false`, encrypted reasoning, no
+  `previous_response_id`); MEAI keeps the reasoning item id in `AdditionalProperties["reasoningItemId"]`, which the
+  stateless replay needs. A fake Responses stream must send `response.output_item.added` before text deltas, or MEAI
+  gives the text no role and it is coalesced into the previous (tool) message. The OpenAI SDK marks the Responses types
+  `OPENAI001`; suppress it per file, not project-wide.
 - Identity rebuilds the cookie principal on every request (security-stamp validation at interval zero, so resets end
   sessions at once); claims the harness adds at sign-in survive only because `OnRefreshingPrincipal` copies them.
 

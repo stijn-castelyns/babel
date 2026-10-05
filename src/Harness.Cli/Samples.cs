@@ -8,7 +8,7 @@ internal static class Samples
     public static IEnumerable<(string File, string Content)> Files(HarnessPaths paths)
     {
         yield return (paths.ConfigFile, """
-            # Model profiles. Every provider goes through Chat Completions.
+            # Model profiles. Every provider goes through Chat Completions unless a profile sets api: responses.
             models:
               local:
                 provider: ollama
@@ -20,6 +20,7 @@ internal static class Samples
               #   endpoint: https://<resource>.openai.azure.com
               #   deployment: <chat-deployment>
               #   auth: { type: entra }       # or { type: apiKey, secret: secret:azure-openai-key }
+              #   api: responses              # only for models that take tools solely over Responses; always store=false
 
             defaults:
               agent: coder

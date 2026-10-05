@@ -1,3 +1,4 @@
+using Harness.Core.Config;
 using Harness.Core.Models;
 using Harness.Core.Prompts;
 using Harness.Core.Sessions;
@@ -44,7 +45,7 @@ public sealed class AgentFactory(
         foreach (IRunExtension ext in exts) contextProviders.AddRange(await ext.GetContextProvidersAsync(run, ct));
 
         IChatClient model = ChatClientOverride?.Invoke(run) ?? models.Create(run.Model);
-        ChatClientFactory.EnsureChatCompletions(model, run.Model);
+        ChatClientFactory.EnsureApi(model, run.Model);
 
         ChatClientAgent inner = model.AsBuilder()
             .Use(next => new CompactingChatClient(next, Compaction(run), run, hooks, _loggers.CreateLogger<CompactingChatClient>()))
@@ -59,6 +60,7 @@ public sealed class AgentFactory(
                     Tools = tools,
                     Temperature = run.Model.Temperature,
                     MaxOutputTokens = run.Model.MaxOutputTokens,
+                    Reasoning = Reasoning(run.Model),
                 },
                 AIContextProviders = contextProviders,
                 ChatHistoryProvider = new FileChatHistoryProvider(run.Session, run.RunId),
@@ -82,4 +84,11 @@ public sealed class AgentFactory(
         new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(Math.Max(4, run.Agent.Compaction.ToolResultsAfter)), 4, null!),
         new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(Math.Max(2, run.Agent.Compaction.SlidingWindowTurns)), Math.Max(1, run.Agent.Compaction.SlidingWindowTurns / 2), null!),
     ]);
+
+    internal static ReasoningOptions? Reasoning(ModelProfile model) => model.ReasoningEffort switch
+    {
+        null or "" => null,
+        var s when Enum.TryParse(s, ignoreCase: true, out ReasoningEffort effort) && !int.TryParse(s, out _) => new ReasoningOptions { Effort = effort },
+        var s => throw new ConfigException($"Model profile has reasoningEffort '{s}'. Use none, low, medium, high or extraHigh."),
+    };
 }

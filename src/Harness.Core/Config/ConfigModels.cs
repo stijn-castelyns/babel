@@ -51,12 +51,22 @@ public sealed class ModelProfile
     public string? Model { get; set; }
     public string? Deployment { get; set; }
     public ModelAuth? Auth { get; set; }
+    /// <summary>
+    /// <c>chatCompletions</c> (the default) or <c>responses</c>, for models that only take tools over the Responses API
+    /// (azure-openai and openai). Responses requests are always sent with <c>store: false</c> and the full local history.
+    /// </summary>
+    public string? Api { get; set; }
     /// <summary>Context window in tokens, used for compaction and <c>models doctor</c>.</summary>
     public int? ContextWindow { get; set; }
     /// <summary>How many runs may use this profile at once. A local model on one GPU usually wants 1.</summary>
     public int? MaxConcurrency { get; set; }
     public float? Temperature { get; set; }
     public int? MaxOutputTokens { get; set; }
+    /// <summary>
+    /// <c>none</c>, <c>low</c>, <c>medium</c>, <c>high</c> or <c>extraHigh</c>; unset sends nothing and the model's default
+    /// applies. Mapped to <c>reasoning_effort</c> (Chat Completions) or <c>reasoning.effort</c> (Responses).
+    /// </summary>
+    public string? ReasoningEffort { get; set; }
 }
 
 public sealed class ModelAuth

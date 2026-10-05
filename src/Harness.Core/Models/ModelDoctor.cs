@@ -20,7 +20,7 @@ public sealed class ModelDoctor(ConfigCatalog catalog, ChatClientFactory factory
             try
             {
                 using var _ = factory.Create(profile);
-                findings.Add(new(name, "ok", $"{profile.Provider} client builds (Chat Completions)."));
+                findings.Add(new(name, "ok", $"{profile.Provider} client builds ({(ChatClientFactory.UsesResponses(profile) ? "Responses, store=false" : "Chat Completions")})."));
             }
             catch (Exception ex)
             {

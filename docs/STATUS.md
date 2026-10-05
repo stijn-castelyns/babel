@@ -10,7 +10,9 @@ phases 5–6 make it reachable from a phone and chat apps.
 **Agent core (phase 1)**
 - One `AgentFactory` builds a `ChatClientAgent` per run from an agent definition and a model profile.
 - Model profiles for `ollama` (OllamaSharp), `azure-openai` (`GetChatClient(...).AsIChatClient()`, Entra or API key) and
-  `openai` (any OpenAI-compatible chat-completions endpoint). A guard rejects any client backed by the Responses API.
+  `openai` (any OpenAI-compatible chat-completions endpoint). A guard rejects any client backed by the Responses API
+  unless the profile sets `api: responses`, and then accepts only a stateless one (see the deviations).
+- `reasoningEffort` on a model profile (`none` … `extraHigh`) is passed through as `ChatOptions.Reasoning`.
 - `harness models doctor` checks every profile and warns when an Ollama `num_ctx` is below 32k.
 - Middleware: model-call hooks and token accounting (`HookingChatClient`), compaction (`CompactingChatClient`),
   tool-call hooks, limits, secret masking, spill files and lazy folder prompts (`ToolCallMiddleware`).
@@ -325,6 +327,7 @@ Built in this order, each step usable on its own; the API listener keeps working
 | `/compact`, `/approvals` slash commands | Answer that they are not available | The daemon has no API for on-demand compaction or session approval policy; compaction runs automatically at the start of a turn. |
 | One SSE subscription | The firehose, plus one per-run stream for each active run of the open session | Per-run streams replay the journal, so a transcript opened mid-run shows what happened before the TUI looked; the firehose ring would not. |
 | 16-colour, 256-colour and TrueColor detection | Themes use the 16 named colours | They render the same everywhere; Terminal.Gui handles the terminal's colour depth. |
+| Chat Completions only, never `GetResponsesClient` | A profile may opt into `api: responses` (azure-openai and openai); `StatelessResponsesChatClient` sends every request with `store: false`, `include: [reasoning.encrypted_content]` and the full local history, rejects any `ConversationId` either way, and the guard refuses a Responses client without it | Some Azure reasoning models reject function tools over Chat Completions at every `reasoning_effort`. History stays in the session files: nothing is stored server-side (a `store: false` response id 404s), encrypted reasoning round-trips from disk, and Agent Framework never switches to service-managed history. Azure profiles use the v1 surface (`<resource>/openai/v1/`); a Foundry project endpoint is mapped to it. Covered by `ResponsesApiTests`. |
 | `submit_output` structured-output schema | The schema is sent as plain tool parameters, minus `$schema`/`$id` | Works with any chat-completions tool calling (Ollama included); validation happens in the harness either way. |
 
 ## Not built yet
